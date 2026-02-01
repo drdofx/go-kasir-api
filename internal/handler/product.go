@@ -2,118 +2,166 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"go-kasir-api/internal/data"
 	"go-kasir-api/internal/model"
+	"go-kasir-api/internal/repository"
+	"go-kasir-api/internal/service"
 )
 
-// ProductCollection handles GET and POST for /api/products.
-func ProductCollection(w http.ResponseWriter, r *http.Request) {
+// ProductHandler handles HTTP requests for products.
+type ProductHandler struct {
+	service *service.ProductService
+}
+
+func NewProductHandler(service *service.ProductService) *ProductHandler {
+	return &ProductHandler{service: service}
+}
+
+// HandleProducts handles GET and POST for /api/products.
+func (h *ProductHandler) HandleProducts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data.Products)
+		h.GetAll(w, r)
 	case http.MethodPost:
-		var productNew model.Product
-		if err := json.NewDecoder(r.Body).Decode(&productNew); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-
-		productNew.ID = len(data.Products) + 1
-		data.Products = append(data.Products, productNew)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(productNew)
+		h.Create(w, r)
 	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// ProductItem handles GET, PUT, and DELETE for /api/products/{id}.
-func ProductItem(w http.ResponseWriter, r *http.Request) {
+func (h *ProductHandler) GetAll(w http.ResponseWriter, r *http.Request) {
+	products, err := h.service.GetAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(products)
+}
+
+func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var product model.Product
+	if err := json.NewDecoder(r.Body).Decode(&product); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.Create(&product); err != nil {
+		if errors.Is(err, service.ErrInvalidCategoryID) {
+			http.Error(w, "Invalid category ID", http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, repository.ErrCategoryNotFound) {
+			http.Error(w, "Category not found", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(product)
+}
+
+// HandleProductByID handles GET/PUT/DELETE for /api/products/{id}.
+func (h *ProductHandler) HandleProductByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		getProductByID(w, r)
+		h.GetByID(w, r)
 	case http.MethodPut:
-		updateProduct(w, r)
+		h.Update(w, r)
 	case http.MethodDelete:
-		deleteProduct(w, r)
+		h.Delete(w, r)
 	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func getProductByID(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/products/")
-	id, err := strconv.Atoi(idStr)
+func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.URL.Path, "/api/products/")
 	if err != nil {
-		http.Error(w, "Invalid Product ID", http.StatusBadRequest)
+		http.Error(w, "Invalid product ID", http.StatusBadRequest)
 		return
 	}
 
-	for _, p := range data.Products {
-		if p.ID == id {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(p)
+	product, err := h.service.GetByID(id)
+	if err != nil {
+		if errors.Is(err, repository.ErrProductNotFound) {
+			http.Error(w, "Product not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	http.Error(w, "Product not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(product)
 }
 
-func updateProduct(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/products/")
-	id, err := strconv.Atoi(idStr)
+func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.URL.Path, "/api/products/")
 	if err != nil {
-		http.Error(w, "Invalid Product ID", http.StatusBadRequest)
+		http.Error(w, "Invalid product ID", http.StatusBadRequest)
 		return
 	}
 
-	var productUpdate model.Product
-	if err := json.NewDecoder(r.Body).Decode(&productUpdate); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	var product model.Product
+	if err := json.NewDecoder(r.Body).Decode(&product); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	for i := range data.Products {
-		if data.Products[i].ID == id {
-			productUpdate.ID = id
-			data.Products[i] = productUpdate
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(productUpdate)
+	product.ID = id
+	if err := h.service.Update(&product); err != nil {
+		if errors.Is(err, service.ErrInvalidCategoryID) {
+			http.Error(w, "Invalid category ID", http.StatusBadRequest)
 			return
 		}
+		if errors.Is(err, repository.ErrCategoryNotFound) {
+			http.Error(w, "Category not found", http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, repository.ErrProductNotFound) {
+			http.Error(w, "Product not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
-	http.Error(w, "Product not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(product)
 }
 
-func deleteProduct(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/api/products/")
-	id, err := strconv.Atoi(idStr)
+func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.URL.Path, "/api/products/")
 	if err != nil {
-		http.Error(w, "Invalid Product ID", http.StatusBadRequest)
+		http.Error(w, "Invalid product ID", http.StatusBadRequest)
 		return
 	}
 
-	for i, p := range data.Products {
-		if p.ID == id {
-			data.Products = append(data.Products[:i], data.Products[i+1:]...)
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{
-				"message": "delete success",
-			})
+	if err := h.service.Delete(id); err != nil {
+		if errors.Is(err, repository.ErrProductNotFound) {
+			http.Error(w, "Product not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	http.Error(w, "Product not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Product deleted successfully",
+	})
+}
+
+func parseID(path string, prefix string) (int, error) {
+	idStr := strings.TrimPrefix(path, prefix)
+	return strconv.Atoi(idStr)
 }

@@ -299,6 +299,7 @@ components:
         - name
         - price
         - stock
+        - category_id
       properties:
         id:
           type: integer
@@ -312,12 +313,19 @@ components:
         stock:
           type: integer
           example: 10
+        category_id:
+          type: integer
+          example: 2
+        category_name:
+          type: string
+          example: Beverages
     ProductInput:
       type: object
       required:
         - name
         - price
         - stock
+        - category_id
       properties:
         name:
           type: string
@@ -328,6 +336,9 @@ components:
         stock:
           type: integer
           example: 200
+        category_id:
+          type: integer
+          example: 2
     Category:
       type: object
       required:

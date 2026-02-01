@@ -2,118 +2,150 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"go-kasir-api/internal/data"
 	"go-kasir-api/internal/model"
+	"go-kasir-api/internal/repository"
+	"go-kasir-api/internal/service"
 )
 
-// CategoryCollection handles GET and POST for /categories.
-func CategoryCollection(w http.ResponseWriter, r *http.Request) {
+// CategoryHandler handles HTTP requests for categories.
+type CategoryHandler struct {
+	service *service.CategoryService
+}
+
+func NewCategoryHandler(service *service.CategoryService) *CategoryHandler {
+	return &CategoryHandler{service: service}
+}
+
+// HandleCategories handles GET and POST for /categories.
+func (h *CategoryHandler) HandleCategories(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data.Categories)
+		h.GetAll(w, r)
 	case http.MethodPost:
-		var categoryNew model.Category
-		if err := json.NewDecoder(r.Body).Decode(&categoryNew); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-
-		categoryNew.ID = len(data.Categories) + 1
-		data.Categories = append(data.Categories, categoryNew)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(categoryNew)
+		h.Create(w, r)
 	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// CategoryItem handles GET, PUT, and DELETE for /categories/{id}.
-func CategoryItem(w http.ResponseWriter, r *http.Request) {
+func (h *CategoryHandler) GetAll(w http.ResponseWriter, r *http.Request) {
+	categories, err := h.service.GetAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(categories)
+}
+
+func (h *CategoryHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var category model.Category
+	if err := json.NewDecoder(r.Body).Decode(&category); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.Create(&category); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(category)
+}
+
+// HandleCategoryByID handles GET/PUT/DELETE for /categories/{id}.
+func (h *CategoryHandler) HandleCategoryByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		getCategoryByID(w, r)
+		h.GetByID(w, r)
 	case http.MethodPut:
-		updateCategory(w, r)
+		h.Update(w, r)
 	case http.MethodDelete:
-		deleteCategory(w, r)
+		h.Delete(w, r)
 	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func getCategoryByID(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/categories/")
-	id, err := strconv.Atoi(idStr)
+func (h *CategoryHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	id, err := parseCategoryID(r.URL.Path, "/categories/")
 	if err != nil {
-		http.Error(w, "Invalid Category ID", http.StatusBadRequest)
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
 		return
 	}
 
-	for _, c := range data.Categories {
-		if c.ID == id {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(c)
+	category, err := h.service.GetByID(id)
+	if err != nil {
+		if errors.Is(err, repository.ErrCategoryNotFound) {
+			http.Error(w, "Category not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	http.Error(w, "Category not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(category)
 }
 
-func updateCategory(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/categories/")
-	id, err := strconv.Atoi(idStr)
+func (h *CategoryHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id, err := parseCategoryID(r.URL.Path, "/categories/")
 	if err != nil {
-		http.Error(w, "Invalid Category ID", http.StatusBadRequest)
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
 		return
 	}
 
-	var categoryUpdate model.Category
-	if err := json.NewDecoder(r.Body).Decode(&categoryUpdate); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+	var category model.Category
+	if err := json.NewDecoder(r.Body).Decode(&category); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	for i := range data.Categories {
-		if data.Categories[i].ID == id {
-			categoryUpdate.ID = id
-			data.Categories[i] = categoryUpdate
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(categoryUpdate)
+	category.ID = id
+	if err := h.service.Update(&category); err != nil {
+		if errors.Is(err, repository.ErrCategoryNotFound) {
+			http.Error(w, "Category not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
-	http.Error(w, "Category not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(category)
 }
 
-func deleteCategory(w http.ResponseWriter, r *http.Request) {
-	idStr := strings.TrimPrefix(r.URL.Path, "/categories/")
-	id, err := strconv.Atoi(idStr)
+func (h *CategoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := parseCategoryID(r.URL.Path, "/categories/")
 	if err != nil {
-		http.Error(w, "Invalid Category ID", http.StatusBadRequest)
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
 		return
 	}
 
-	for i, c := range data.Categories {
-		if c.ID == id {
-			data.Categories = append(data.Categories[:i], data.Categories[i+1:]...)
-
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{
-				"message": "delete success",
-			})
+	if err := h.service.Delete(id); err != nil {
+		if errors.Is(err, repository.ErrCategoryNotFound) {
+			http.Error(w, "Category not found", http.StatusNotFound)
 			return
 		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	http.Error(w, "Category not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Category deleted successfully",
+	})
+}
+
+func parseCategoryID(path string, prefix string) (int, error) {
+	idStr := strings.TrimPrefix(path, prefix)
+	return strconv.Atoi(idStr)
 }
