@@ -33,6 +33,13 @@ paths:
       tags:
         - Products
       summary: Get all products
+      parameters:
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter products by name (case-insensitive)
       responses:
         "200":
           description: List of products
@@ -290,6 +297,67 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/checkout:
+    post:
+      tags:
+        - Transactions
+      summary: Create a checkout transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutRequest"
+      responses:
+        "200":
+          description: Transaction created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "400":
+          description: Invalid request
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/report/hari-ini:
+    get:
+      tags:
+        - Reports
+      summary: Sales summary for today
+      responses:
+        "200":
+          description: Sales summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SalesSummary"
+  /api/report:
+    get:
+      tags:
+        - Reports
+      summary: Sales summary by date range
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Sales summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SalesSummary"
 components:
   schemas:
     Product:
@@ -375,3 +443,98 @@ components:
         message:
           type: string
           example: delete success
+    Transaction:
+      type: object
+      required:
+        - id
+        - total_amount
+        - created_at
+        - details
+      properties:
+        id:
+          type: integer
+          example: 1
+        total_amount:
+          type: integer
+          example: 45000
+        created_at:
+          type: string
+          format: date-time
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/TransactionDetail"
+    TransactionDetail:
+      type: object
+      required:
+        - id
+        - transaction_id
+        - product_id
+        - quantity
+        - subtotal
+      properties:
+        id:
+          type: integer
+          example: 1
+        transaction_id:
+          type: integer
+          example: 1
+        product_id:
+          type: integer
+          example: 2
+        product_name:
+          type: string
+          example: Instant Noodles
+        quantity:
+          type: integer
+          example: 2
+        subtotal:
+          type: integer
+          example: 7000
+    CheckoutItem:
+      type: object
+      required:
+        - product_id
+        - quantity
+      properties:
+        product_id:
+          type: integer
+          example: 2
+        quantity:
+          type: integer
+          example: 3
+    CheckoutRequest:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckoutItem"
+    SalesSummary:
+      type: object
+      required:
+        - total_revenue
+        - total_transaksi
+      properties:
+        total_revenue:
+          type: integer
+          example: 45000
+        total_transaksi:
+          type: integer
+          example: 5
+        produk_terlaris:
+          $ref: "#/components/schemas/TopProduct"
+    TopProduct:
+      type: object
+      required:
+        - nama
+        - qty_terjual
+      properties:
+        nama:
+          type: string
+          example: Instant Noodles
+        qty_terjual:
+          type: integer
+          example: 12
