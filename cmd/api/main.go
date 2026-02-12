@@ -21,6 +21,7 @@ type Config struct {
 	DBConn            string `mapstructure:"DB_CONN"`
 	APIKey            string `mapstructure:"API_KEY"`
 	CORSAllowedOrigin string `mapstructure:"CORS_ALLOWED_ORIGIN"`
+	LogLevel          string `mapstructure:"LOG_LEVEL"`
 }
 
 func loadConfig() Config {
@@ -37,6 +38,7 @@ func loadConfig() Config {
 		DBConn:            viper.GetString("DB_CONN"),
 		APIKey:            viper.GetString("API_KEY"),
 		CORSAllowedOrigin: viper.GetString("CORS_ALLOWED_ORIGIN"),
+		LogLevel:          viper.GetString("LOG_LEVEL"),
 	}
 }
 
@@ -89,8 +91,9 @@ func main() {
 
 	rootHandler := middleware.Chain(
 		mux,
+		middleware.RequestID(),
 		middleware.CORS(config.CORSAllowedOrigin),
-		middleware.Logger(),
+		middleware.Logger(config.LogLevel),
 	)
 
 	addr := "0.0.0.0:" + config.Port
