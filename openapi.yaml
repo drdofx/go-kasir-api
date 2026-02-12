@@ -77,6 +77,8 @@ paths:
       tags:
         - Products
       summary: Get product by ID
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -102,10 +104,18 @@ paths:
             text/plain:
               schema:
                 type: string
+        "401":
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
     put:
       tags:
         - Products
       summary: Update product by ID
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -137,10 +147,18 @@ paths:
             text/plain:
               schema:
                 type: string
+        "401":
+          description: Unauthorized
+          content:
+            text/plain:
+              schema:
+                type: string
     delete:
       tags:
         - Products
       summary: Delete product by ID
+      security:
+        - ApiKeyAuth: []
       parameters:
         - name: id
           in: path
@@ -162,6 +180,12 @@ paths:
                 type: string
         "404":
           description: Product not found
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Unauthorized
           content:
             text/plain:
               schema:
@@ -302,6 +326,8 @@ paths:
       tags:
         - Transactions
       summary: Create a checkout transaction
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -317,6 +343,12 @@ paths:
                 $ref: "#/components/schemas/Transaction"
         "400":
           description: Invalid request
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Unauthorized
           content:
             text/plain:
               schema:
@@ -359,6 +391,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/SalesSummary"
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
   schemas:
     Product:
       type: object

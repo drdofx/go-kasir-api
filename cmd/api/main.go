@@ -9,6 +9,7 @@ import (
 
 	"go-kasir-api/internal/database"
 	"go-kasir-api/internal/handler"
+	"go-kasir-api/internal/middleware"
 	"go-kasir-api/internal/repository"
 	"go-kasir-api/internal/service"
 
@@ -16,8 +17,10 @@ import (
 )
 
 type Config struct {
-	Port   string `mapstructure:"PORT"`
-	DBConn string `mapstructure:"DB_CONN"`
+	Port              string `mapstructure:"PORT"`
+	DBConn            string `mapstructure:"DB_CONN"`
+	APIKey            string `mapstructure:"API_KEY"`
+	CORSAllowedOrigin string `mapstructure:"CORS_ALLOWED_ORIGIN"`
 }
 
 func loadConfig() Config {
@@ -30,8 +33,10 @@ func loadConfig() Config {
 	}
 
 	return Config{
-		Port:   viper.GetString("PORT"),
-		DBConn: viper.GetString("DB_CONN"),
+		Port:              viper.GetString("PORT"),
+		DBConn:            viper.GetString("DB_CONN"),
+		APIKey:            viper.GetString("API_KEY"),
+		CORSAllowedOrigin: viper.GetString("CORS_ALLOWED_ORIGIN"),
 	}
 }
 
@@ -42,6 +47,9 @@ func main() {
 	}
 	if config.DBConn == "" {
 		log.Fatal("DB_CONN is required")
+	}
+	if config.APIKey == "" {
+		log.Fatal("API_KEY is required")
 	}
 
 	db, err := database.InitDB(config.DBConn)
@@ -62,23 +70,32 @@ func main() {
 	transactionService := service.NewTransactionService(transactionRepo)
 	transactionHandler := handler.NewTransactionHandler(transactionService)
 
-	http.HandleFunc("/api/products", productHandler.HandleProducts)
-	http.HandleFunc("/api/products/", productHandler.HandleProductByID)
-	http.HandleFunc("/categories", categoryHandler.HandleCategories)
-	http.HandleFunc("/categories/", categoryHandler.HandleCategoryByID)
-	http.HandleFunc("/api/checkout", transactionHandler.HandleCheckout)
-	http.HandleFunc("/api/report/hari-ini", transactionHandler.HandleTodayReport)
-	http.HandleFunc("/api/report", transactionHandler.HandleReport)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	apiKey := middleware.APIKey(config.APIKey)
+
+	mux.Handle("/api/products", http.HandlerFunc(productHandler.HandleProducts))
+	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), apiKey))
+	mux.Handle("/categories", http.HandlerFunc(categoryHandler.HandleCategories))
+	mux.Handle("/categories/", http.HandlerFunc(categoryHandler.HandleCategoryByID))
+	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), apiKey))
+	mux.Handle("/api/report/hari-ini", http.HandlerFunc(transactionHandler.HandleTodayReport))
+	mux.Handle("/api/report", http.HandlerFunc(transactionHandler.HandleReport))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/health", http.StatusTemporaryRedirect)
 	})
-	http.HandleFunc("/health", handler.Health)
-	http.HandleFunc("/openapi.yaml", handler.OpenAPI)
-	http.HandleFunc("/docs", handler.Docs)
+	mux.HandleFunc("/health", handler.Health)
+	mux.HandleFunc("/openapi.yaml", handler.OpenAPI)
+	mux.HandleFunc("/docs", handler.Docs)
+
+	rootHandler := middleware.Chain(
+		mux,
+		middleware.CORS(config.CORSAllowedOrigin),
+		middleware.Logger(),
+	)
 
 	addr := "0.0.0.0:" + config.Port
 	fmt.Println("Server running at", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, rootHandler); err != nil {
 		fmt.Println("failed to start server", err)
 	}
 }
