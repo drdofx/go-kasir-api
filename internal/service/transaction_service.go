@@ -1,7 +1,6 @@
 package service
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -24,59 +23,69 @@ func (s *TransactionService) Checkout(items []model.CheckoutItem) (*model.Transa
 		return nil, errors.New("items are required")
 	}
 
+	// Validate quantities and collect product IDs
+	productIDs := make([]int, len(items))
+	for i, item := range items {
+		if item.Quantity <= 0 {
+			return nil, fmt.Errorf("invalid quantity for product %d", item.ProductID)
+		}
+		productIDs[i] = item.ProductID
+	}
+
 	tx, err := s.repo.BeginTx()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
+	// 1. Batch fetch all products in a single query (with FOR UPDATE lock)
+	snapshots, err := s.repo.GetProductSnapshots(tx, productIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Validate stock and compute totals
 	totalAmount := 0
 	details := make([]model.TransactionDetail, 0, len(items))
-
 	for _, item := range items {
-		if item.Quantity <= 0 {
-			return nil, fmt.Errorf("invalid quantity for product %d", item.ProductID)
+		snap, ok := snapshots[item.ProductID]
+		if !ok {
+			return nil, fmt.Errorf("product %d not found", item.ProductID)
 		}
-
-		productName, productPrice, stock, err := s.repo.GetProductSnapshot(tx, item.ProductID)
-		if err == sql.ErrNoRows {
-			return nil, repository.ErrProductNotFound
+		if snap.Stock < item.Quantity {
+			return nil, fmt.Errorf("insufficient stock for %s (have %d, need %d)", snap.Name, snap.Stock, item.Quantity)
 		}
-		if err != nil {
-			return nil, err
-		}
-
-		if stock < item.Quantity {
-			return nil, fmt.Errorf("insufficient stock for product id %d", item.ProductID)
-		}
-
-		subtotal := productPrice * item.Quantity
+		subtotal := snap.Price * item.Quantity
 		totalAmount += subtotal
-
-		if err := s.repo.UpdateProductStock(tx, item.ProductID, item.Quantity); err != nil {
-			return nil, err
-		}
-
 		details = append(details, model.TransactionDetail{
 			ProductID:   item.ProductID,
-			ProductName: productName,
+			ProductName: snap.Name,
 			Quantity:    item.Quantity,
 			Subtotal:    subtotal,
 		})
 	}
 
+	// 3. Batch update stock in a single statement
+	if err := s.repo.BatchUpdateStock(tx, items); err != nil {
+		return nil, err
+	}
+
+	// 4. Insert transaction header
 	transactionID, createdAt, err := s.repo.InsertTransaction(tx, totalAmount)
 	if err != nil {
 		return nil, err
 	}
 
+	// 5. Set transaction ID on details and batch insert
 	for i := range details {
 		details[i].TransactionID = transactionID
-		detailID, err := s.repo.InsertTransactionDetail(tx, details[i])
-		if err != nil {
-			return nil, err
-		}
-		details[i].ID = detailID
+	}
+	detailIDs, err := s.repo.BatchInsertDetails(tx, details)
+	if err != nil {
+		return nil, err
+	}
+	for i, id := range detailIDs {
+		details[i].ID = id
 	}
 
 	if err := tx.Commit(); err != nil {

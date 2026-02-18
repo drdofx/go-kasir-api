@@ -7,6 +7,8 @@ import (
 
 	"go-kasir-api/internal/model"
 	"go-kasir-api/internal/service"
+
+	"github.com/rs/zerolog/log"
 )
 
 // TransactionHandler handles checkout requests.
@@ -31,16 +33,19 @@ func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Reque
 func (h *TransactionHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	var req model.CheckoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error().Err(err).Msg("checkout: invalid request body")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	transaction, err := h.service.Checkout(req.Items)
 	if err != nil {
+		log.Error().Err(err).Msg("checkout: failed")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	log.Info().Int("transaction_id", transaction.ID).Int("total", transaction.TotalAmount).Msg("checkout: success")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(transaction)
 }
@@ -58,6 +63,7 @@ func (h *TransactionHandler) HandleTodayReport(w http.ResponseWriter, r *http.Re
 func (h *TransactionHandler) TodayReport(w http.ResponseWriter, r *http.Request) {
 	summary, err := h.service.GetSalesSummary(nil, nil)
 	if err != nil {
+		log.Error().Err(err).Msg("report: failed to get today's summary")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -97,6 +103,7 @@ func (h *TransactionHandler) Report(w http.ResponseWriter, r *http.Request) {
 
 	summary, err := h.service.GetSalesSummary(&startDate, &endDate)
 	if err != nil {
+		log.Error().Err(err).Msg("report: failed to get summary")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
