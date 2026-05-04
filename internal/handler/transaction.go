@@ -11,7 +11,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// TransactionHandler handles checkout requests.
 type TransactionHandler struct {
 	service *service.TransactionService
 }
@@ -20,7 +19,6 @@ func NewTransactionHandler(service *service.TransactionService) *TransactionHand
 	return &TransactionHandler{service: service}
 }
 
-// HandleCheckout handles POST /api/checkout.
 func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -31,6 +29,8 @@ func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *TransactionHandler) Checkout(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	var req model.CheckoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error().Err(err).Msg("checkout: invalid request body")
@@ -38,7 +38,7 @@ func (h *TransactionHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transaction, err := h.service.Checkout(req.Items)
+	transaction, err := h.service.Checkout(r.Context(), req.Items)
 	if err != nil {
 		log.Error().Err(err).Msg("checkout: failed")
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -46,11 +46,9 @@ func (h *TransactionHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Info().Int("transaction_id", transaction.ID).Int("total", transaction.TotalAmount).Msg("checkout: success")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(transaction)
+	jsonResponse(w, http.StatusOK, transaction)
 }
 
-// HandleTodayReport handles GET /api/report/hari-ini.
 func (h *TransactionHandler) HandleTodayReport(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -61,18 +59,16 @@ func (h *TransactionHandler) HandleTodayReport(w http.ResponseWriter, r *http.Re
 }
 
 func (h *TransactionHandler) TodayReport(w http.ResponseWriter, r *http.Request) {
-	summary, err := h.service.GetSalesSummary(nil, nil)
+	summary, err := h.service.GetSalesSummary(r.Context(), nil, nil)
 	if err != nil {
 		log.Error().Err(err).Msg("report: failed to get today's summary")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summary)
+	jsonResponse(w, http.StatusOK, summary)
 }
 
-// HandleReport handles GET /api/report?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD.
 func (h *TransactionHandler) HandleReport(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -101,13 +97,12 @@ func (h *TransactionHandler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	summary, err := h.service.GetSalesSummary(&startDate, &endDate)
+	summary, err := h.service.GetSalesSummary(r.Context(), &startDate, &endDate)
 	if err != nil {
 		log.Error().Err(err).Msg("report: failed to get summary")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(summary)
+	jsonResponse(w, http.StatusOK, summary)
 }

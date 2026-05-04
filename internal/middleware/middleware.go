@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"os"
@@ -18,6 +17,18 @@ type Middleware func(http.Handler) http.Handler
 
 const requestIDHeader = "X-Request-Id"
 
+// SecurityHeaders sets security-related HTTP headers.
+func SecurityHeaders() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // Chain applies middlewares from left to right.
 func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	for i := len(middlewares) - 1; i >= 0; i-- {
@@ -26,33 +37,18 @@ func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-// APIKey validates X-API-Key against configured value.
-func APIKey(expectedKey string) Middleware {
-	expected := strings.TrimSpace(expectedKey)
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			provided := strings.TrimSpace(r.Header.Get("X-API-Key"))
-			if expected == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // CORS adds CORS headers and handles preflight requests.
 func CORS(allowedOrigin string) Middleware {
-	if strings.TrimSpace(allowedOrigin) == "" {
-		allowedOrigin = "*"
+	origin := strings.TrimSpace(allowedOrigin)
+	if origin == "" {
+		origin = "http://localhost:8080"
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

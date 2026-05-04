@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -9,7 +10,16 @@ import (
 	"go-kasir-api/internal/model"
 )
 
-// TransactionRepository handles checkout persistence.
+type TxOptions = sql.TxOptions
+
+type Transactor interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	Commit() error
+	Rollback() error
+}
+
 type TransactionRepository struct {
 	db *sql.DB
 }
@@ -18,20 +28,11 @@ func NewTransactionRepository(db *sql.DB) *TransactionRepository {
 	return &TransactionRepository{db: db}
 }
 
-func (repo *TransactionRepository) BeginTx() (*sql.Tx, error) {
-	return repo.db.Begin()
+func (repo *TransactionRepository) BeginTx(ctx context.Context, opts *sql.TxOptions) (Transactor, error) {
+	return repo.db.BeginTx(ctx, opts)
 }
 
-// ProductSnapshot holds the info fetched in a single batch query.
-type ProductSnapshot struct {
-	ID    int
-	Name  string
-	Price int
-	Stock int
-}
-
-// GetProductSnapshots fetches multiple products in a single query with FOR UPDATE lock.
-func (repo *TransactionRepository) GetProductSnapshots(tx *sql.Tx, productIDs []int) (map[int]ProductSnapshot, error) {
+func (repo *TransactionRepository) GetProductSnapshots(ctx context.Context, tx Transactor, productIDs []int) (map[int]model.ProductSnapshot, error) {
 	if len(productIDs) == 0 {
 		return nil, nil
 	}
@@ -48,15 +49,15 @@ func (repo *TransactionRepository) GetProductSnapshots(tx *sql.Tx, productIDs []
 		strings.Join(placeholders, ","),
 	)
 
-	rows, err := tx.Query(query, args...)
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	result := make(map[int]ProductSnapshot, len(productIDs))
+	result := make(map[int]model.ProductSnapshot, len(productIDs))
 	for rows.Next() {
-		var s ProductSnapshot
+		var s model.ProductSnapshot
 		if err := rows.Scan(&s.ID, &s.Name, &s.Price, &s.Stock); err != nil {
 			return nil, err
 		}
@@ -65,15 +66,11 @@ func (repo *TransactionRepository) GetProductSnapshots(tx *sql.Tx, productIDs []
 	return result, rows.Err()
 }
 
-// BatchUpdateStock decrements stock for multiple products in a single statement.
-func (repo *TransactionRepository) BatchUpdateStock(tx *sql.Tx, items []model.CheckoutItem) error {
-	// Use a single UPDATE with CASE
+func (repo *TransactionRepository) BatchUpdateStock(ctx context.Context, tx Transactor, items []model.CheckoutItem) error {
 	if len(items) == 0 {
 		return nil
 	}
 
-	// UPDATE products SET stock = stock - (CASE id WHEN $1 THEN $2 WHEN $3 THEN $4 ... END)
-	// WHERE id IN ($5, $6, ...)
 	var sb strings.Builder
 	sb.WriteString("UPDATE products SET stock = stock - (CASE id ")
 	args := make([]any, 0, len(items)*3)
@@ -89,14 +86,14 @@ func (repo *TransactionRepository) BatchUpdateStock(tx *sql.Tx, items []model.Ch
 	sb.WriteString(strings.Join(ids, ","))
 	sb.WriteString(")")
 
-	_, err := tx.Exec(sb.String(), args...)
+	_, err := tx.ExecContext(ctx, sb.String(), args...)
 	return err
 }
 
-func (repo *TransactionRepository) InsertTransaction(tx *sql.Tx, totalAmount int) (int, time.Time, error) {
+func (repo *TransactionRepository) InsertTransaction(ctx context.Context, tx Transactor, totalAmount int) (int, time.Time, error) {
 	var transactionID int
 	var createdAt time.Time
-	err := tx.QueryRow("INSERT INTO transactions (total_amount) VALUES ($1) RETURNING id, created_at", totalAmount).
+	err := tx.QueryRowContext(ctx, "INSERT INTO transactions (total_amount) VALUES ($1) RETURNING id, created_at", totalAmount).
 		Scan(&transactionID, &createdAt)
 	if err != nil {
 		return 0, time.Time{}, err
@@ -104,8 +101,7 @@ func (repo *TransactionRepository) InsertTransaction(tx *sql.Tx, totalAmount int
 	return transactionID, createdAt, nil
 }
 
-// BatchInsertDetails inserts all transaction details in a single multi-row INSERT.
-func (repo *TransactionRepository) BatchInsertDetails(tx *sql.Tx, details []model.TransactionDetail) ([]int, error) {
+func (repo *TransactionRepository) BatchInsertDetails(ctx context.Context, tx Transactor, details []model.TransactionDetail) ([]int, error) {
 	if len(details) == 0 {
 		return nil, nil
 	}
@@ -124,7 +120,7 @@ func (repo *TransactionRepository) BatchInsertDetails(tx *sql.Tx, details []mode
 	}
 	sb.WriteString(" RETURNING id")
 
-	rows, err := tx.Query(sb.String(), args...)
+	rows, err := tx.QueryContext(ctx, sb.String(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -141,19 +137,19 @@ func (repo *TransactionRepository) BatchInsertDetails(tx *sql.Tx, details []mode
 	return ids, rows.Err()
 }
 
-func (repo *TransactionRepository) GetSalesSummary(startDate, endDate *time.Time) (*model.SalesSummary, error) {
+func (repo *TransactionRepository) GetSalesSummary(ctx context.Context, startDate, endDate *time.Time) (*model.SalesSummary, error) {
 	var totalRevenue int
 	var totalTransactions int
 
 	if startDate == nil || endDate == nil {
-		err := repo.db.QueryRow(
+		err := repo.db.QueryRowContext(ctx,
 			"SELECT COALESCE(SUM(total_amount), 0), COALESCE(COUNT(*), 0) FROM transactions WHERE created_at::date = CURRENT_DATE",
 		).Scan(&totalRevenue, &totalTransactions)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		err := repo.db.QueryRow(
+		err := repo.db.QueryRowContext(ctx,
 			"SELECT COALESCE(SUM(total_amount), 0), COALESCE(COUNT(*), 0) FROM transactions WHERE created_at::date BETWEEN $1 AND $2",
 			startDate.Format("2006-01-02"), endDate.Format("2006-01-02"),
 		).Scan(&totalRevenue, &totalTransactions)
@@ -165,7 +161,7 @@ func (repo *TransactionRepository) GetSalesSummary(startDate, endDate *time.Time
 	var topName sql.NullString
 	var topQty sql.NullInt64
 	if startDate == nil || endDate == nil {
-		err := repo.db.QueryRow(
+		err := repo.db.QueryRowContext(ctx,
 			`SELECT p.name, COALESCE(SUM(td.quantity), 0) AS qty
 			 FROM transaction_details td
 			 JOIN transactions t ON t.id = td.transaction_id
@@ -179,7 +175,7 @@ func (repo *TransactionRepository) GetSalesSummary(startDate, endDate *time.Time
 			return nil, err
 		}
 	} else {
-		err := repo.db.QueryRow(
+		err := repo.db.QueryRowContext(ctx,
 			`SELECT p.name, COALESCE(SUM(td.quantity), 0) AS qty
 			 FROM transaction_details td
 			 JOIN transactions t ON t.id = td.transaction_id

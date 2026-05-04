@@ -20,6 +20,14 @@ type TransactionDetail struct {
 	Subtotal      int    `json:"subtotal"`
 }
 
+// ProductSnapshot is used for batch-fetching products during checkout.
+type ProductSnapshot struct {
+	ID    int
+	Name  string
+	Price int
+	Stock int
+}
+
 // CheckoutItem represents a product and quantity pair.
 type CheckoutItem struct {
 	ProductID int `json:"product_id"`
@@ -33,13 +41,13 @@ type CheckoutRequest struct {
 
 // SalesSummary represents revenue summary.
 type SalesSummary struct {
-	TotalRevenue     int         `json:"total_revenue"`
-	TotalTransactions int        `json:"total_transaksi"`
-	TopProduct       *TopProduct `json:"produk_terlaris,omitempty"`
+	TotalRevenue      int         `json:"total_revenue"`
+	TotalTransactions int         `json:"total_transactions"`
+	TopProduct        *TopProduct `json:"top_product,omitempty"`
 }
 
 // TopProduct represents top-selling product summary.
 type TopProduct struct {
-	Name    string `json:"nama"`
-	QtySold int    `json:"qty_terjual"`
+	Name    string `json:"name"`
+	QtySold int    `json:"qty_sold"`
 }

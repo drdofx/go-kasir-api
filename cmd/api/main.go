@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"go-kasir-api/internal/database"
 	"go-kasir-api/internal/handler"
@@ -20,9 +25,10 @@ import (
 type Config struct {
 	Port              string `mapstructure:"PORT"`
 	DBConn            string `mapstructure:"DB_CONN"`
-	APIKey            string `mapstructure:"API_KEY"`
 	CORSAllowedOrigin string `mapstructure:"CORS_ALLOWED_ORIGIN"`
 	LogLevel          string `mapstructure:"LOG_LEVEL"`
+	AdminPassword     string `mapstructure:"ADMIN_PASSWORD"`
+	MigrationsPath    string `mapstructure:"MIGRATIONS_PATH"`
 }
 
 func loadConfig() Config {
@@ -31,60 +37,50 @@ func loadConfig() Config {
 
 	if _, err := os.Stat(".env"); err == nil {
 		viper.SetConfigFile(".env")
-		_ = viper.ReadInConfig()
+		if err := viper.ReadInConfig(); err != nil {
+			log.Printf("Warning: failed to read .env file: %v", err)
+		}
 	}
 
 	return Config{
 		Port:              viper.GetString("PORT"),
 		DBConn:            viper.GetString("DB_CONN"),
-		APIKey:            viper.GetString("API_KEY"),
 		CORSAllowedOrigin: viper.GetString("CORS_ALLOWED_ORIGIN"),
 		LogLevel:          viper.GetString("LOG_LEVEL"),
+		AdminPassword:     viper.GetString("ADMIN_PASSWORD"),
+		MigrationsPath:    viper.GetString("MIGRATIONS_PATH"),
 	}
 }
 
-func autoMigrate(db *sql.DB) {
-	queries := []string{
-		`CREATE TABLE IF NOT EXISTS users (
-			id SERIAL PRIMARY KEY,
-			username VARCHAR(50) UNIQUE NOT NULL,
-			password_hash TEXT NOT NULL,
-			name VARCHAR(100) NOT NULL,
-			role VARCHAR(20) DEFAULT 'cashier',
-			created_at TIMESTAMP DEFAULT NOW()
-		)`,
-		`CREATE TABLE IF NOT EXISTS sessions (
-			id VARCHAR(64) PRIMARY KEY,
-			user_id INT REFERENCES users(id) ON DELETE CASCADE,
-			expires_at TIMESTAMP NOT NULL,
-			created_at TIMESTAMP DEFAULT NOW()
-		)`,
+func seedAdmin(db *sql.DB, password string) {
+	if password == "" {
+		log.Println("Skipping admin seed: ADMIN_PASSWORD not set")
+		return
 	}
 
-	for _, q := range queries {
-		if _, err := db.Exec(q); err != nil {
-			log.Printf("Migration warning: %v", err)
-		}
-	}
-
-	// Seed default admin if no users exist
 	var count int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
-	if count == 0 {
-		hash, err := service.HashPassword("admin123")
-		if err != nil {
-			log.Printf("Failed to hash seed password: %v", err)
-			return
-		}
-		_, err = db.Exec(
-			`INSERT INTO users (username, password_hash, name, role) VALUES ($1, $2, $3, $4)`,
-			"admin", hash, "Administrator", "admin",
-		)
-		if err != nil {
-			log.Printf("Failed to seed admin user: %v", err)
-		} else {
-			log.Println("Seeded default admin user (admin / admin123)")
-		}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		log.Printf("Warning: failed to check user count: %v", err)
+		return
+	}
+	if count > 0 {
+		return
+	}
+
+	hash, err := service.HashPassword(password)
+	if err != nil {
+		log.Printf("Failed to hash seed password: %v", err)
+		return
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO users (username, password_hash, name, role) VALUES ($1, $2, $3, $4)`,
+		"admin", hash, "Administrator", "admin",
+	)
+	if err != nil {
+		log.Printf("Failed to seed admin user: %v", err)
+	} else {
+		log.Println("Seeded default admin user")
 	}
 }
 
@@ -103,7 +99,13 @@ func main() {
 	}
 	defer db.Close()
 
-	autoMigrate(db)
+	// Run migrations
+	if err := database.RunMigrations(db, config.MigrationsPath); err != nil {
+		log.Fatal("Failed to run migrations:", err)
+	}
+
+	// Seed admin if no users exist
+	seedAdmin(db, config.AdminPassword)
 
 	// Repositories
 	categoryRepo := repository.NewCategoryRepository(db)
@@ -133,16 +135,14 @@ func main() {
 	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
 	mux.HandleFunc("/api/auth/me", authHandler.HandleMe)
 
-	// Public API routes
-	mux.Handle("/api/products", http.HandlerFunc(productHandler.HandleProducts))
-	mux.Handle("/categories", http.HandlerFunc(categoryHandler.HandleCategories))
-	mux.Handle("/categories/", http.HandlerFunc(categoryHandler.HandleCategoryByID))
-	mux.Handle("/api/report/hari-ini", http.HandlerFunc(transactionHandler.HandleTodayReport))
-	mux.Handle("/api/report", http.HandlerFunc(transactionHandler.HandleReport))
-
 	// Protected API routes (require session)
+	mux.Handle("/api/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), sessionAuth))
 	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), sessionAuth))
+	mux.Handle("/api/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), sessionAuth))
+	mux.Handle("/api/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), sessionAuth))
 	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), sessionAuth))
+	mux.Handle("/api/report/hari-ini", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTodayReport), sessionAuth))
+	mux.Handle("/api/report", middleware.Chain(http.HandlerFunc(transactionHandler.HandleReport), sessionAuth))
 
 	// Static pages
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -159,10 +159,19 @@ func main() {
 	webFS := http.Dir("web")
 	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/app/")
-		if p == "" {
-			p = "index.html"
+		p = filepath.Clean("/" + p)
+		if p == "/" || p == "\\" {
+			http.ServeFile(w, r, "web/index.html")
+			return
 		}
-		if _, err := os.Stat("web/" + p); os.IsNotExist(err) {
+		fullPath := filepath.Join("web", p)
+		absWeb, _ := filepath.Abs("web")
+		absPath, _ := filepath.Abs(fullPath)
+		if !strings.HasPrefix(absPath, absWeb) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 			http.ServeFile(w, r, "web/index.html")
 			return
 		}
@@ -173,12 +182,38 @@ func main() {
 		mux,
 		middleware.RequestID(),
 		middleware.CORS(config.CORSAllowedOrigin),
+		middleware.SecurityHeaders(),
 		middleware.Logger(config.LogLevel),
 	)
 
 	addr := "0.0.0.0:" + config.Port
-	fmt.Println("Server running at", addr)
-	if err := http.ListenAndServe(addr, rootHandler); err != nil {
-		fmt.Println("failed to start server", err)
+
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      rootHandler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	// Graceful shutdown
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		fmt.Println("Server running at", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	<-done
+	fmt.Println("\nShutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 }

@@ -1,35 +1,55 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"strings"
+
 	"go-kasir-api/internal/model"
-	"go-kasir-api/internal/repository"
 )
 
-// CategoryService holds category business logic.
+var ErrNotFound = errors.New("not found")
+
 type CategoryService struct {
-	repo *repository.CategoryRepository
+	repo CategoryRepository
 }
 
-func NewCategoryService(repo *repository.CategoryRepository) *CategoryService {
+func NewCategoryService(repo CategoryRepository) *CategoryService {
 	return &CategoryService{repo: repo}
 }
 
-func (s *CategoryService) GetAll() ([]model.Category, error) {
-	return s.repo.GetAll()
+func (s *CategoryService) GetAll(ctx context.Context) ([]model.Category, error) {
+	return s.repo.GetAll(ctx)
 }
 
-func (s *CategoryService) Create(data *model.Category) error {
-	return s.repo.Create(data)
+func (s *CategoryService) Create(ctx context.Context, data *model.Category) error {
+	if err := validateCategory(data); err != nil {
+		return err
+	}
+	return s.repo.Create(ctx, data)
 }
 
-func (s *CategoryService) GetByID(id int) (*model.Category, error) {
-	return s.repo.GetByID(id)
+func (s *CategoryService) GetByID(ctx context.Context, id int) (*model.Category, error) {
+	return s.repo.GetByID(ctx, id)
 }
 
-func (s *CategoryService) Update(category *model.Category) error {
-	return s.repo.Update(category)
+func (s *CategoryService) Update(ctx context.Context, category *model.Category) error {
+	if err := validateCategory(category); err != nil {
+		return err
+	}
+	return s.repo.Update(ctx, category)
 }
 
-func (s *CategoryService) Delete(id int) error {
-	return s.repo.Delete(id)
+func (s *CategoryService) Delete(ctx context.Context, id int) error {
+	return s.repo.Delete(ctx, id)
+}
+
+func validateCategory(c *model.Category) error {
+	if strings.TrimSpace(c.Name) == "" {
+		return errors.New("category name is required")
+	}
+	if strings.TrimSpace(c.Description) == "" {
+		return errors.New("category description is required")
+	}
+	return nil
 }

@@ -1,27 +1,35 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	"go-kasir-api/internal/model"
-	"go-kasir-api/internal/repository"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
+type UserRepository interface {
+	GetByUsername(ctx context.Context, username string) (*model.User, error)
+	GetByID(ctx context.Context, id int) (*model.User, error)
+	CreateSession(ctx context.Context, userID int, duration time.Duration) (*model.Session, error)
+	GetSession(ctx context.Context, sessionID string) (*model.Session, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+}
+
 const sessionDuration = 24 * time.Hour
 
 type AuthService struct {
-	repo *repository.UserRepository
+	repo UserRepository
 }
 
-func NewAuthService(repo *repository.UserRepository) *AuthService {
+func NewAuthService(repo UserRepository) *AuthService {
 	return &AuthService{repo: repo}
 }
 
-func (s *AuthService) Login(username, password string) (*model.Session, *model.User, error) {
-	user, err := s.repo.GetByUsername(username)
+func (s *AuthService) Login(ctx context.Context, username, password string) (*model.Session, *model.User, error) {
+	user, err := s.repo.GetByUsername(ctx, username)
 	if err != nil {
 		return nil, nil, errors.New("invalid credentials")
 	}
@@ -30,7 +38,7 @@ func (s *AuthService) Login(username, password string) (*model.Session, *model.U
 		return nil, nil, errors.New("invalid credentials")
 	}
 
-	session, err := s.repo.CreateSession(user.ID, sessionDuration)
+	session, err := s.repo.CreateSession(ctx, user.ID, sessionDuration)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -38,13 +46,13 @@ func (s *AuthService) Login(username, password string) (*model.Session, *model.U
 	return session, user, nil
 }
 
-func (s *AuthService) ValidateSession(sessionID string) (*model.User, error) {
-	sess, err := s.repo.GetSession(sessionID)
+func (s *AuthService) ValidateSession(ctx context.Context, sessionID string) (*model.User, error) {
+	sess, err := s.repo.GetSession(ctx, sessionID)
 	if err != nil {
 		return nil, errors.New("invalid session")
 	}
 
-	user, err := s.repo.GetByID(sess.UserID)
+	user, err := s.repo.GetByID(ctx, sess.UserID)
 	if err != nil {
 		return nil, errors.New("user not found")
 	}
@@ -52,11 +60,10 @@ func (s *AuthService) ValidateSession(sessionID string) (*model.User, error) {
 	return user, nil
 }
 
-func (s *AuthService) Logout(sessionID string) error {
-	return s.repo.DeleteSession(sessionID)
+func (s *AuthService) Logout(ctx context.Context, sessionID string) error {
+	return s.repo.DeleteSession(ctx, sessionID)
 }
 
-// HashPassword creates a bcrypt hash for seeding users.
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {

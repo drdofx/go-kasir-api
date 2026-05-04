@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Go Kasir API
   version: 1.0.0
-  description: Simple cashier API for product CRUD.
+  description: Simple cashier API for product CRUD, checkout, and sales reporting.
 servers:
   - url: /
 paths:
@@ -28,11 +28,77 @@ paths:
                   message:
                     type: string
                     example: API Running
+  /api/auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Login with username and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  example: admin123
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Login successful
+                  user:
+                    type: object
+        "400":
+          description: Invalid request
+        "401":
+          description: Invalid credentials
+  /api/auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Logout and clear session
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+  /api/auth/me:
+    get:
+      tags:
+        - Auth
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Not authenticated
   /api/products:
     get:
       tags:
         - Products
       summary: Get all products
+      security:
+        - SessionCookie: []
       parameters:
         - name: name
           in: query
@@ -49,10 +115,14 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Product"
+        "401":
+          description: Unauthorized
     post:
       tags:
         - Products
       summary: Create a product
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -68,17 +138,15 @@ paths:
                 $ref: "#/components/schemas/Product"
         "400":
           description: Invalid request
-          content:
-            text/plain:
-              schema:
-                type: string
+        "401":
+          description: Unauthorized
   /api/products/{id}:
     get:
       tags:
         - Products
       summary: Get product by ID
       security:
-        - ApiKeyAuth: []
+        - SessionCookie: []
       parameters:
         - name: id
           in: path
@@ -94,28 +162,16 @@ paths:
                 $ref: "#/components/schemas/Product"
         "400":
           description: Invalid product ID
-          content:
-            text/plain:
-              schema:
-                type: string
         "404":
           description: Product not found
-          content:
-            text/plain:
-              schema:
-                type: string
         "401":
           description: Unauthorized
-          content:
-            text/plain:
-              schema:
-                type: string
     put:
       tags:
         - Products
       summary: Update product by ID
       security:
-        - ApiKeyAuth: []
+        - SessionCookie: []
       parameters:
         - name: id
           in: path
@@ -137,28 +193,16 @@ paths:
                 $ref: "#/components/schemas/Product"
         "400":
           description: Invalid request
-          content:
-            text/plain:
-              schema:
-                type: string
         "404":
           description: Product not found
-          content:
-            text/plain:
-              schema:
-                type: string
         "401":
           description: Unauthorized
-          content:
-            text/plain:
-              schema:
-                type: string
     delete:
       tags:
         - Products
       summary: Delete product by ID
       security:
-        - ApiKeyAuth: []
+        - SessionCookie: []
       parameters:
         - name: id
           in: path
@@ -174,27 +218,17 @@ paths:
                 $ref: "#/components/schemas/Message"
         "400":
           description: Invalid product ID
-          content:
-            text/plain:
-              schema:
-                type: string
         "404":
           description: Product not found
-          content:
-            text/plain:
-              schema:
-                type: string
         "401":
           description: Unauthorized
-          content:
-            text/plain:
-              schema:
-                type: string
-  /categories:
+  /api/categories:
     get:
       tags:
         - Categories
       summary: Get all categories
+      security:
+        - SessionCookie: []
       responses:
         "200":
           description: List of categories
@@ -204,10 +238,14 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Category"
+        "401":
+          description: Unauthorized
     post:
       tags:
         - Categories
       summary: Create a category
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -223,15 +261,15 @@ paths:
                 $ref: "#/components/schemas/Category"
         "400":
           description: Invalid request
-          content:
-            text/plain:
-              schema:
-                type: string
-  /categories/{id}:
+        "401":
+          description: Unauthorized
+  /api/categories/{id}:
     get:
       tags:
         - Categories
       summary: Get category by ID
+      security:
+        - SessionCookie: []
       parameters:
         - name: id
           in: path
@@ -247,20 +285,16 @@ paths:
                 $ref: "#/components/schemas/Category"
         "400":
           description: Invalid category ID
-          content:
-            text/plain:
-              schema:
-                type: string
         "404":
           description: Category not found
-          content:
-            text/plain:
-              schema:
-                type: string
+        "401":
+          description: Unauthorized
     put:
       tags:
         - Categories
       summary: Update category by ID
+      security:
+        - SessionCookie: []
       parameters:
         - name: id
           in: path
@@ -282,20 +316,16 @@ paths:
                 $ref: "#/components/schemas/Category"
         "400":
           description: Invalid request
-          content:
-            text/plain:
-              schema:
-                type: string
         "404":
           description: Category not found
-          content:
-            text/plain:
-              schema:
-                type: string
+        "401":
+          description: Unauthorized
     delete:
       tags:
         - Categories
       summary: Delete category by ID
+      security:
+        - SessionCookie: []
       parameters:
         - name: id
           in: path
@@ -311,23 +341,17 @@ paths:
                 $ref: "#/components/schemas/Message"
         "400":
           description: Invalid category ID
-          content:
-            text/plain:
-              schema:
-                type: string
         "404":
           description: Category not found
-          content:
-            text/plain:
-              schema:
-                type: string
+        "401":
+          description: Unauthorized
   /api/checkout:
     post:
       tags:
         - Transactions
       summary: Create a checkout transaction
       security:
-        - ApiKeyAuth: []
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -343,21 +367,15 @@ paths:
                 $ref: "#/components/schemas/Transaction"
         "400":
           description: Invalid request
-          content:
-            text/plain:
-              schema:
-                type: string
         "401":
           description: Unauthorized
-          content:
-            text/plain:
-              schema:
-                type: string
   /api/report/hari-ini:
     get:
       tags:
         - Reports
       summary: Sales summary for today
+      security:
+        - SessionCookie: []
       responses:
         "200":
           description: Sales summary
@@ -365,11 +383,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SalesSummary"
+        "401":
+          description: Unauthorized
   /api/report:
     get:
       tags:
         - Reports
       summary: Sales summary by date range
+      security:
+        - SessionCookie: []
       parameters:
         - name: start_date
           in: query
@@ -390,13 +412,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SalesSummary"
+        "400":
+          description: Missing or invalid dates
+        "401":
+          description: Unauthorized
 components:
   securitySchemes:
-    ApiKeyAuth:
+    SessionCookie:
       type: apiKey
-      in: header
-      name: X-API-Key
+      in: cookie
+      name: session_id
   schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     Product:
       type: object
       required:
@@ -553,25 +593,25 @@ components:
       type: object
       required:
         - total_revenue
-        - total_transaksi
+        - total_transactions
       properties:
         total_revenue:
           type: integer
           example: 45000
-        total_transaksi:
+        total_transactions:
           type: integer
           example: 5
-        produk_terlaris:
+        top_product:
           $ref: "#/components/schemas/TopProduct"
     TopProduct:
       type: object
       required:
-        - nama
-        - qty_terjual
+        - name
+        - qty_sold
       properties:
-        nama:
+        name:
           type: string
           example: Instant Noodles
-        qty_terjual:
+        qty_sold:
           type: integer
           example: 12

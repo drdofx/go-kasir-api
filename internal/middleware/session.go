@@ -20,7 +20,7 @@ func SessionAuth(authService *service.AuthService) Middleware {
 				return
 			}
 
-			user, err := authService.ValidateSession(cookie.Value)
+			user, err := authService.ValidateSession(r.Context(), cookie.Value)
 			if err != nil {
 				http.Error(w, "Session expired", http.StatusUnauthorized)
 				return

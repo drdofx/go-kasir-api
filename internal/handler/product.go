@@ -3,16 +3,14 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"go-kasir-api/internal/model"
 	"go-kasir-api/internal/repository"
 	"go-kasir-api/internal/service"
 )
 
-// ProductHandler handles HTTP requests for products.
 type ProductHandler struct {
 	service *service.ProductService
 }
@@ -21,7 +19,6 @@ func NewProductHandler(service *service.ProductService) *ProductHandler {
 	return &ProductHandler{service: service}
 }
 
-// HandleProducts handles GET and POST for /api/products.
 func (h *ProductHandler) HandleProducts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -35,24 +32,26 @@ func (h *ProductHandler) HandleProducts(w http.ResponseWriter, r *http.Request) 
 
 func (h *ProductHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	products, err := h.service.GetAll(name)
+	products, err := h.service.GetAll(r.Context(), name)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("GetAll error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(products)
+	jsonResponse(w, http.StatusOK, products)
 }
 
 func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	var product model.Product
 	if err := json.NewDecoder(r.Body).Decode(&product); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.service.Create(&product); err != nil {
+	if err := h.service.Create(r.Context(), &product); err != nil {
 		if errors.Is(err, service.ErrInvalidCategoryID) {
 			http.Error(w, "Invalid category ID", http.StatusBadRequest)
 			return
@@ -65,12 +64,9 @@ func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(product)
+	jsonResponse(w, http.StatusCreated, product)
 }
 
-// HandleProductByID handles GET/PUT/DELETE for /api/products/{id}.
 func (h *ProductHandler) HandleProductByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -91,18 +87,18 @@ func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.service.GetByID(id)
+	product, err := h.service.GetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, repository.ErrProductNotFound) {
 			http.Error(w, "Product not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("GetByID error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(product)
+	jsonResponse(w, http.StatusOK, product)
 }
 
 func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +108,8 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	var product model.Product
 	if err := json.NewDecoder(r.Body).Decode(&product); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -119,7 +117,7 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	product.ID = id
-	if err := h.service.Update(&product); err != nil {
+	if err := h.service.Update(r.Context(), &product); err != nil {
 		if errors.Is(err, service.ErrInvalidCategoryID) {
 			http.Error(w, "Invalid category ID", http.StatusBadRequest)
 			return
@@ -136,8 +134,7 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(product)
+	jsonResponse(w, http.StatusOK, product)
 }
 
 func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -147,22 +144,17 @@ func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Delete(id); err != nil {
+	if err := h.service.Delete(r.Context(), id); err != nil {
 		if errors.Is(err, repository.ErrProductNotFound) {
 			http.Error(w, "Product not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Delete error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	jsonResponse(w, http.StatusOK, map[string]string{
 		"message": "Product deleted successfully",
 	})
-}
-
-func parseID(path string, prefix string) (int, error) {
-	idStr := strings.TrimPrefix(path, prefix)
-	return strconv.Atoi(idStr)
 }

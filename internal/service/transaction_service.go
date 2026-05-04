@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -9,21 +10,35 @@ import (
 	"go-kasir-api/internal/repository"
 )
 
-// TransactionService handles checkout logic.
-type TransactionService struct {
-	repo *repository.TransactionRepository
+type TransactionRepository interface {
+	BeginTx(ctx context.Context, opts *repository.TxOptions) (repository.Transactor, error)
+	GetProductSnapshots(ctx context.Context, tx repository.Transactor, productIDs []int) (map[int]model.ProductSnapshot, error)
+	BatchUpdateStock(ctx context.Context, tx repository.Transactor, items []model.CheckoutItem) error
+	InsertTransaction(ctx context.Context, tx repository.Transactor, totalAmount int) (int, time.Time, error)
+	BatchInsertDetails(ctx context.Context, tx repository.Transactor, details []model.TransactionDetail) ([]int, error)
+	GetSalesSummary(ctx context.Context, startDate, endDate *time.Time) (*model.SalesSummary, error)
 }
 
-func NewTransactionService(repo *repository.TransactionRepository) *TransactionService {
+
+
+const maxCheckoutItems = 100
+
+type TransactionService struct {
+	repo TransactionRepository
+}
+
+func NewTransactionService(repo TransactionRepository) *TransactionService {
 	return &TransactionService{repo: repo}
 }
 
-func (s *TransactionService) Checkout(items []model.CheckoutItem) (*model.Transaction, error) {
+func (s *TransactionService) Checkout(ctx context.Context, items []model.CheckoutItem) (*model.Transaction, error) {
 	if len(items) == 0 {
 		return nil, errors.New("items are required")
 	}
+	if len(items) > maxCheckoutItems {
+		return nil, fmt.Errorf("maximum %d items per checkout", maxCheckoutItems)
+	}
 
-	// Validate quantities and collect product IDs
 	productIDs := make([]int, len(items))
 	for i, item := range items {
 		if item.Quantity <= 0 {
@@ -32,19 +47,21 @@ func (s *TransactionService) Checkout(items []model.CheckoutItem) (*model.Transa
 		productIDs[i] = item.ProductID
 	}
 
-	tx, err := s.repo.BeginTx()
+	tx, err := s.repo.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
 
-	// 1. Batch fetch all products in a single query (with FOR UPDATE lock)
-	snapshots, err := s.repo.GetProductSnapshots(tx, productIDs)
+	snapshots, err := s.repo.GetProductSnapshots(ctx, tx, productIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Validate stock and compute totals
 	totalAmount := 0
 	details := make([]model.TransactionDetail, 0, len(items))
 	for _, item := range items {
@@ -56,6 +73,12 @@ func (s *TransactionService) Checkout(items []model.CheckoutItem) (*model.Transa
 			return nil, fmt.Errorf("insufficient stock for %s (have %d, need %d)", snap.Name, snap.Stock, item.Quantity)
 		}
 		subtotal := snap.Price * item.Quantity
+		if subtotal < 0 || subtotal > 1_000_000_000 {
+			return nil, fmt.Errorf("subtotal exceeds maximum allowed for product %d", item.ProductID)
+		}
+		if totalAmount > 1_000_000_000-subtotal {
+			return nil, errors.New("total amount exceeds maximum allowed")
+		}
 		totalAmount += subtotal
 		details = append(details, model.TransactionDetail{
 			ProductID:   item.ProductID,
@@ -65,22 +88,19 @@ func (s *TransactionService) Checkout(items []model.CheckoutItem) (*model.Transa
 		})
 	}
 
-	// 3. Batch update stock in a single statement
-	if err := s.repo.BatchUpdateStock(tx, items); err != nil {
+	if err := s.repo.BatchUpdateStock(ctx, tx, items); err != nil {
 		return nil, err
 	}
 
-	// 4. Insert transaction header
-	transactionID, createdAt, err := s.repo.InsertTransaction(tx, totalAmount)
+	transactionID, createdAt, err := s.repo.InsertTransaction(ctx, tx, totalAmount)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Set transaction ID on details and batch insert
 	for i := range details {
 		details[i].TransactionID = transactionID
 	}
-	detailIDs, err := s.repo.BatchInsertDetails(tx, details)
+	detailIDs, err := s.repo.BatchInsertDetails(ctx, tx, details)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +120,6 @@ func (s *TransactionService) Checkout(items []model.CheckoutItem) (*model.Transa
 	}, nil
 }
 
-func (s *TransactionService) GetSalesSummary(startDate, endDate *time.Time) (*model.SalesSummary, error) {
-	return s.repo.GetSalesSummary(startDate, endDate)
+func (s *TransactionService) GetSalesSummary(ctx context.Context, startDate, endDate *time.Time) (*model.SalesSummary, error) {
+	return s.repo.GetSalesSummary(ctx, startDate, endDate)
 }

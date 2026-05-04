@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: kasir-db
+    environment:
+      POSTGRES_USER: kasir
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kasir123}
+      POSTGRES_DB: kasir
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kasir -d kasir"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: kasir-api
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      DB_CONN: postgres://kasir:kasir123@db:5432/kasir?sslmode=disable
+      CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173,http://localhost:8080}
+      LOG_LEVEL: info
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
