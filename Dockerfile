@@ -14,7 +14,6 @@ FROM alpine:3.19
 WORKDIR /app
 COPY --from=builder /src/bin/server .
 COPY --from=builder /src/openapi.yaml .
-COPY --from=builder /src/web ./web
 COPY --from=builder /src/migrations ./migrations
 
 RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app

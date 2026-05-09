@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -99,33 +98,27 @@ func main() {
 	}
 	defer db.Close()
 
-	// Run migrations
 	if err := database.RunMigrations(db, config.MigrationsPath); err != nil {
 		log.Fatal("Failed to run migrations:", err)
 	}
 
-	// Seed admin if no users exist
 	seedAdmin(db, config.AdminPassword)
 
-	// Repositories
 	categoryRepo := repository.NewCategoryRepository(db)
 	productRepo := repository.NewProductRepository(db)
 	transactionRepo := repository.NewTransactionRepository(db)
 	userRepo := repository.NewUserRepository(db)
 
-	// Services
 	categoryService := service.NewCategoryService(categoryRepo)
 	productService := service.NewProductService(productRepo, categoryRepo)
 	transactionService := service.NewTransactionService(transactionRepo)
 	authService := service.NewAuthService(userRepo)
 
-	// Handlers
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
 	transactionHandler := handler.NewTransactionHandler(transactionService)
 	authHandler := handler.NewAuthHandler(authService)
 
-	// Middleware
 	sessionAuth := middleware.SessionAuth(authService)
 
 	mux := http.NewServeMux()
@@ -152,32 +145,6 @@ func main() {
 	mux.HandleFunc("/openapi.yaml", handler.OpenAPI)
 	mux.HandleFunc("/docs", handler.Docs)
 
-	// SPA
-	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/app/", http.StatusTemporaryRedirect)
-	})
-	webFS := http.Dir("web")
-	mux.HandleFunc("/app/", func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/app/")
-		p = filepath.Clean("/" + p)
-		if p == "/" || p == "\\" {
-			http.ServeFile(w, r, "web/index.html")
-			return
-		}
-		fullPath := filepath.Join("web", p)
-		absWeb, _ := filepath.Abs("web")
-		absPath, _ := filepath.Abs(fullPath)
-		if !strings.HasPrefix(absPath, absWeb) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			http.ServeFile(w, r, "web/index.html")
-			return
-		}
-		http.StripPrefix("/app/", http.FileServer(webFS)).ServeHTTP(w, r)
-	})
-
 	rootHandler := middleware.Chain(
 		mux,
 		middleware.RequestID(),
@@ -196,7 +163,6 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Graceful shutdown
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
