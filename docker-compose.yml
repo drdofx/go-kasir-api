@@ -29,6 +29,7 @@ services:
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173,http://localhost:8080}
       LOG_LEVEL: info
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
     depends_on:
       db:
         condition: service_healthy

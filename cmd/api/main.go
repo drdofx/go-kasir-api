@@ -28,6 +28,7 @@ type Config struct {
 	LogLevel          string `mapstructure:"LOG_LEVEL"`
 	AdminPassword     string `mapstructure:"ADMIN_PASSWORD"`
 	MigrationsPath    string `mapstructure:"MIGRATIONS_PATH"`
+	JWTSecret         string `mapstructure:"JWT_SECRET"`
 }
 
 func loadConfig() Config {
@@ -48,6 +49,7 @@ func loadConfig() Config {
 		LogLevel:          viper.GetString("LOG_LEVEL"),
 		AdminPassword:     viper.GetString("ADMIN_PASSWORD"),
 		MigrationsPath:    viper.GetString("MIGRATIONS_PATH"),
+		JWTSecret:         viper.GetString("JWT_SECRET"),
 	}
 }
 
@@ -91,6 +93,9 @@ func main() {
 	if config.DBConn == "" {
 		log.Fatal("DB_CONN is required")
 	}
+	if config.JWTSecret == "" {
+		log.Fatal("JWT_SECRET is required")
+	}
 
 	db, err := database.InitDB(config.DBConn)
 	if err != nil {
@@ -112,14 +117,14 @@ func main() {
 	categoryService := service.NewCategoryService(categoryRepo)
 	productService := service.NewProductService(productRepo, categoryRepo)
 	transactionService := service.NewTransactionService(transactionRepo)
-	authService := service.NewAuthService(userRepo)
+	authService := service.NewAuthService(userRepo, config.JWTSecret)
 
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
 	transactionHandler := handler.NewTransactionHandler(transactionService)
 	authHandler := handler.NewAuthHandler(authService)
 
-	sessionAuth := middleware.SessionAuth(authService)
+	jwtAuth := middleware.JWTAuth(authService)
 
 	mux := http.NewServeMux()
 
@@ -128,14 +133,14 @@ func main() {
 	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
 	mux.HandleFunc("/api/auth/me", authHandler.HandleMe)
 
-	// Protected API routes (require session)
-	mux.Handle("/api/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), sessionAuth))
-	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), sessionAuth))
-	mux.Handle("/api/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), sessionAuth))
-	mux.Handle("/api/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), sessionAuth))
-	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), sessionAuth))
-	mux.Handle("/api/report/hari-ini", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTodayReport), sessionAuth))
-	mux.Handle("/api/report", middleware.Chain(http.HandlerFunc(transactionHandler.HandleReport), sessionAuth))
+	// Protected API routes (require JWT)
+	mux.Handle("/api/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), jwtAuth))
+	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtAuth))
+	mux.Handle("/api/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), jwtAuth))
+	mux.Handle("/api/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtAuth))
+	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtAuth))
+	mux.Handle("/api/report/hari-ini", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTodayReport), jwtAuth))
+	mux.Handle("/api/report", middleware.Chain(http.HandlerFunc(transactionHandler.HandleReport), jwtAuth))
 
 	// Static pages
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

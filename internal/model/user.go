@@ -10,10 +10,3 @@ type User struct {
 	Role         string    `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
 }
-
-type Session struct {
-	ID        string    `json:"id"`
-	UserID    int       `json:"user_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
-}

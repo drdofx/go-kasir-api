@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"go-kasir-api/internal/model"
 	"go-kasir-api/internal/service"
@@ -10,19 +11,31 @@ import (
 
 type userContextKey struct{}
 
-// SessionAuth validates the session_id cookie and stores the user in context.
-func SessionAuth(authService *service.AuthService) Middleware {
+// JWTAuth validates the Authorization Bearer token and stores the user in context.
+func JWTAuth(authService *service.AuthService) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie("session_id")
-			if err != nil || cookie.Value == "" {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 
-			user, err := authService.ValidateSession(r.Context(), cookie.Value)
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			claims, err := authService.ValidateToken(parts[1])
 			if err != nil {
-				http.Error(w, "Session expired", http.StatusUnauthorized)
+				http.Error(w, "Invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			user, err := authService.GetUserFromToken(r.Context(), claims)
+			if err != nil {
+				http.Error(w, "User not found", http.StatusUnauthorized)
 				return
 			}
 

@@ -60,6 +60,9 @@ paths:
                   message:
                     type: string
                     example: Login successful
+                  token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIs...
                   user:
                     type: object
         "400":
@@ -70,7 +73,7 @@ paths:
     post:
       tags:
         - Auth
-      summary: Logout and clear session
+      summary: Logout (client-side token discard)
       responses:
         "200":
           description: Logged out
@@ -83,6 +86,8 @@ paths:
       tags:
         - Auth
       summary: Get current user
+      security:
+        - BearerAuth: []
       responses:
         "200":
           description: Current user
@@ -98,7 +103,7 @@ paths:
         - Products
       summary: Get all products
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: name
           in: query
@@ -122,7 +127,7 @@ paths:
         - Products
       summary: Create a product
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -146,7 +151,7 @@ paths:
         - Products
       summary: Get product by ID
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -171,7 +176,7 @@ paths:
         - Products
       summary: Update product by ID
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -202,7 +207,7 @@ paths:
         - Products
       summary: Delete product by ID
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -228,7 +233,7 @@ paths:
         - Categories
       summary: Get all categories
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       responses:
         "200":
           description: List of categories
@@ -245,7 +250,7 @@ paths:
         - Categories
       summary: Create a category
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -269,7 +274,7 @@ paths:
         - Categories
       summary: Get category by ID
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -294,7 +299,7 @@ paths:
         - Categories
       summary: Update category by ID
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -325,7 +330,7 @@ paths:
         - Categories
       summary: Delete category by ID
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -351,7 +356,7 @@ paths:
         - Transactions
       summary: Create a checkout transaction
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -375,7 +380,7 @@ paths:
         - Reports
       summary: Sales summary for today
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       responses:
         "200":
           description: Sales summary
@@ -391,7 +396,7 @@ paths:
         - Reports
       summary: Sales summary by date range
       security:
-        - SessionCookie: []
+        - BearerAuth: []
       parameters:
         - name: start_date
           in: query
@@ -418,10 +423,10 @@ paths:
           description: Unauthorized
 components:
   securitySchemes:
-    SessionCookie:
-      type: apiKey
-      in: cookie
-      name: session_id
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     User:
       type: object

@@ -2,9 +2,8 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
-	"time"
+	"strings"
 
 	"go-kasir-api/internal/service"
 )
@@ -23,8 +22,9 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Message string `json:"message"`
-	User    any    `json:"user"`
+	Message string      `json:"message"`
+	Token   string      `json:"token"`
+	User    interface{} `json:"user"`
 }
 
 func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -46,25 +46,15 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, user, err := h.authService.Login(r.Context(), req.Username, req.Password)
+	token, user, err := h.authService.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    session.ID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteLaxMode,
-		Expires:  session.ExpiresAt,
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(loginResponse{
+	jsonResponse(w, http.StatusOK, loginResponse{
 		Message: "Login successful",
+		Token:   token,
 		User:    user,
 	})
 }
@@ -75,26 +65,9 @@ func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie("session_id")
-	if err == nil {
-		if logoutErr := h.authService.Logout(r.Context(), cookie.Value); logoutErr != nil {
-			log.Printf("logout: failed to delete session: %v", logoutErr)
-		}
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out"})
+	// JWT logout is client-side: client discards the token.
+	// No server action needed for stateless JWT.
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "Logged out"})
 }
 
 func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
@@ -103,18 +76,33 @@ func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie("session_id")
-	if err != nil {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
 
-	user, err := h.authService.ValidateSession(r.Context(), cookie.Value)
-	if err != nil {
-		http.Error(w, "Session expired", http.StatusUnauthorized)
+	// Extract Bearer token
+	parts := make([]string, 0)
+	for _, p := range strings.SplitN(authHeader, " ", 2) {
+		parts = append(parts, p)
+	}
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		http.Error(w, "Invalid authorization header", http.StatusUnauthorized)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	claims, err := h.authService.ValidateToken(parts[1])
+	if err != nil {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.authService.GetUserFromToken(r.Context(), claims)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, user)
 }
