@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: kasir-db
     environment:
       POSTGRES_USER: kasir
@@ -28,7 +28,7 @@ services:
       DB_CONN: postgres://kasir:kasir123@db:5432/kasir?sslmode=disable
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173,http://localhost:8080}
       LOG_LEVEL: info
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
     depends_on:
       db:
