@@ -136,6 +136,12 @@ func main() {
 	mux.Handle("/api/v1/inventory/alerts/", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleSetThreshold), jwtMiddleware))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
+	mux.Handle("/api/v1/report/dashboard", middleware.Chain(http.HandlerFunc(reportHandler.HandleDashboard), jwtMiddleware))
+	mux.Handle("/api/v1/report/weekly", middleware.Chain(http.HandlerFunc(reportHandler.HandleWeeklyReport), jwtMiddleware))
+	mux.Handle("/api/v1/report/monthly", middleware.Chain(http.HandlerFunc(reportHandler.HandleMonthlyReport), jwtMiddleware))
+	mux.Handle("/api/v1/report/by-category", middleware.Chain(http.HandlerFunc(reportHandler.HandleSalesByCategory), jwtMiddleware))
+	mux.Handle("/api/v1/report/by-product", middleware.Chain(http.HandlerFunc(reportHandler.HandleSalesByProduct), jwtMiddleware))
+	mux.Handle("/api/v1/report/export", middleware.Chain(http.HandlerFunc(reportHandler.HandleExportCSV), jwtMiddleware))
 
 	wrapped := middleware.Chain(mux,
 		middleware.RequestID(),
