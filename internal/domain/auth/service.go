@@ -77,6 +77,31 @@ func (s *AuthService) ValidateToken(tokenStr string) (int, string, string, error
     return int(userIDFloat), username, role, nil
 }
 
+func (s *AuthService) FindAllUsers() ([]User, error) {
+	return s.userRepo.FindAll()
+}
+
+func (s *AuthService) CreateUser(username, password, name, role string) (*User, error) {
+	existing, _ := s.userRepo.FindByUsername(username)
+	if existing != nil {
+		return nil, errors.New("username already exists")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	u := &User{Username: username, PasswordHash: string(hash), Name: name, Role: role}
+	if u.Role == "" {
+		u.Role = "cashier"
+	}
+	err = s.userRepo.Create(u)
+	return u, err
+}
+
+func (s *AuthService) UpdateUserRole(userID int, role string, permissions []string) error {
+	return s.userRepo.UpdateRole(userID, role, permissions)
+}
+
 func (s *AuthService) ChangePassword(userID int, currentPassword, newPassword string) error {
     user, err := s.userRepo.FindByID(userID)
     if err != nil {

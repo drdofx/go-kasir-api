@@ -134,6 +134,8 @@ func main() {
 	mux.Handle("/api/v1/purchase-orders/", middleware.Chain(http.HandlerFunc(poHandler.HandlePOByID), jwtMiddleware))
 	mux.Handle("/api/v1/inventory/alerts", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleAlerts), jwtMiddleware))
 	mux.Handle("/api/v1/inventory/alerts/", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleSetThreshold), jwtMiddleware))
+	mux.Handle("/api/v1/users", middleware.Chain(http.HandlerFunc(authHandler.HandleUsers), jwtMiddleware))
+	mux.Handle("/api/v1/users/", middleware.Chain(http.HandlerFunc(authHandler.HandleUpdateUserRole), jwtMiddleware))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 	mux.Handle("/api/v1/report/dashboard", middleware.Chain(http.HandlerFunc(reportHandler.HandleDashboard), jwtMiddleware))

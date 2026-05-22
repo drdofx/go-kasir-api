@@ -4,6 +4,7 @@ import (
     "encoding/json"
     "errors"
     "net/http"
+    "strconv"
 
     "go-kasir-api/internal/pkg/helpers"
     "go-kasir-api/internal/pkg/middleware"
@@ -94,6 +95,73 @@ func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
 		Role:      user.Role,
 		CreatedAt: user.CreatedAt,
 	})
+}
+
+func (h *AuthHandler) HandleUsers(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		users, err := h.service.FindAllUsers()
+		if err != nil {
+			helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		res := make([]userJSON, len(users))
+		for i, u := range users {
+			res[i] = userJSON{
+				ID: u.ID, Username: u.Username, Name: u.Name,
+				Role: u.Role, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			}
+		}
+		helpers.WriteJSON(w, http.StatusOK, res)
+	case http.MethodPost:
+		var req struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Name     string `json:"name"`
+			Role     string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.Username == "" || req.Password == "" {
+			helpers.WriteError(w, http.StatusBadRequest, "username and password are required")
+			return
+		}
+		u, err := h.service.CreateUser(req.Username, req.Password, req.Name, req.Role)
+		if err != nil {
+			helpers.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		helpers.WriteJSON(w, http.StatusCreated, userJSON{
+			ID: u.ID, Username: u.Username, Name: u.Name,
+			Role: u.Role, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	default:
+		helpers.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (h *AuthHandler) HandleUpdateUserRole(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		helpers.WriteError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Role        string   `json:"role"`
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.service.UpdateUserRole(id, req.Role, req.Permissions); err != nil {
+		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, map[string]string{"message": "role updated"})
 }
 
 func (h *AuthHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
