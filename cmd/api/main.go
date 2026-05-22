@@ -10,12 +10,13 @@ import (
 	"go-kasir-api/internal/domain/auth"
 	"go-kasir-api/internal/domain/category"
 	"go-kasir-api/internal/domain/customer"
+	"go-kasir-api/internal/domain/inventory"
 	"go-kasir-api/internal/domain/payment"
 	"go-kasir-api/internal/domain/product"
 	"go-kasir-api/internal/domain/purchaseorder"
-	"go-kasir-api/internal/domain/supplier"
 	"go-kasir-api/internal/domain/report"
 	"go-kasir-api/internal/domain/returns"
+	"go-kasir-api/internal/domain/supplier"
 	"go-kasir-api/internal/domain/transaction"
 	"go-kasir-api/internal/pkg/database"
 	"go-kasir-api/internal/pkg/helpers"
@@ -59,6 +60,7 @@ func main() {
 	returnRepo := returns.NewReturnRepository(db)
 	supplierRepo := supplier.NewSupplierRepository(db)
 	purchaseOrderRepo := purchaseorder.NewPurchaseOrderRepository(db)
+	inventoryRepo := inventory.NewInventoryRepository(db)
 
 	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
 
@@ -70,6 +72,7 @@ func main() {
 	returnService := returns.NewReturnService(returnRepo, transactionRepo)
 	supplierService := supplier.NewSupplierService(supplierRepo)
 	poService := purchaseorder.NewPOService(purchaseOrderRepo, supplierRepo)
+	inventoryService := inventory.NewInventoryService(inventoryRepo)
 	transactionService := transaction.NewTransactionService(transactionRepo, customerRepo, paymentService)
 	reportService := report.NewReportService(db)
 
@@ -81,6 +84,7 @@ func main() {
 	returnHandler := returns.NewReturnHandler(returnService)
 	supplierHandler := supplier.NewSupplierHandler(supplierService)
 	poHandler := purchaseorder.NewPOHandler(poService)
+	inventoryHandler := inventory.NewInventoryHandler(inventoryService)
 	transactionHandler := transaction.NewTransactionHandler(transactionService)
 	reportHandler := report.NewReportHandler(reportService)
 
@@ -128,6 +132,8 @@ func main() {
 	mux.Handle("/api/v1/suppliers/", middleware.Chain(http.HandlerFunc(supplierHandler.HandleSupplierByID), jwtMiddleware))
 	mux.Handle("/api/v1/purchase-orders", middleware.Chain(http.HandlerFunc(poHandler.HandlePOs), jwtMiddleware))
 	mux.Handle("/api/v1/purchase-orders/", middleware.Chain(http.HandlerFunc(poHandler.HandlePOByID), jwtMiddleware))
+	mux.Handle("/api/v1/inventory/alerts", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleAlerts), jwtMiddleware))
+	mux.Handle("/api/v1/inventory/alerts/", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleSetThreshold), jwtMiddleware))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 
