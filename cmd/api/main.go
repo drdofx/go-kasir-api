@@ -9,6 +9,8 @@ import (
 
 	"go-kasir-api/internal/domain/auth"
 	"go-kasir-api/internal/domain/category"
+	"go-kasir-api/internal/domain/customer"
+	"go-kasir-api/internal/domain/payment"
 	"go-kasir-api/internal/domain/product"
 	"go-kasir-api/internal/domain/report"
 	"go-kasir-api/internal/domain/transaction"
@@ -49,18 +51,24 @@ func main() {
 	productRepo := product.NewProductRepository(db)
 	categoryRepo := category.NewCategoryRepository(db)
 	transactionRepo := transaction.NewTransactionRepository(db)
+	customerRepo := customer.NewCustomerRepository(db)
+	paymentRepo := payment.NewPaymentRepository(db)
 
 	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
 
 	authService := auth.NewAuthService(userRepo, viper.GetString("JWT_SECRET"))
 	categoryService := category.NewCategoryService(categoryRepo)
 	productService := product.NewProductService(productRepo, catRepoForProduct)
-	transactionService := transaction.NewTransactionService(transactionRepo)
+	customerService := customer.NewCustomerService(customerRepo)
+	paymentService := payment.NewPaymentService(paymentRepo)
+	transactionService := transaction.NewTransactionService(transactionRepo, customerRepo, paymentService)
 	reportService := report.NewReportService(db)
 
 	authHandler := auth.NewAuthHandler(authService)
 	productHandler := product.NewProductHandler(productService)
 	categoryHandler := category.NewCategoryHandler(categoryService)
+	customerHandler := customer.NewCustomerHandler(customerService)
+	paymentHandler := payment.NewPaymentHandler(paymentService)
 	transactionHandler := transaction.NewTransactionHandler(transactionService)
 	reportHandler := report.NewReportHandler(reportService)
 
@@ -99,6 +107,9 @@ func main() {
 	mux.Handle("/api/v1/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtMiddleware))
 	mux.Handle("/api/v1/transactions", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactions), jwtMiddleware))
 	mux.Handle("/api/v1/transactions/", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactionByID), jwtMiddleware))
+	mux.Handle("/api/v1/customers", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomers), jwtMiddleware))
+	mux.Handle("/api/v1/customers/", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomerByID), jwtMiddleware))
+	mux.Handle("/api/v1/payment-types", middleware.Chain(http.HandlerFunc(paymentHandler.HandlePaymentTypes), jwtMiddleware))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 

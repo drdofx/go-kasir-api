@@ -1,0 +1,2 @@
+ALTER TABLE transactions DROP COLUMN IF EXISTS customer_id;
+DROP TABLE IF EXISTS customers;

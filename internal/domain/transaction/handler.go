@@ -16,8 +16,15 @@ func NewTransactionHandler(service *TransactionService) *TransactionHandler {
 	return &TransactionHandler{service: service}
 }
 
+type checkoutPayment struct {
+	Type   string `json:"type"`
+	Amount int    `json:"amount"`
+}
+
 type checkoutRequest struct {
-	Items []CheckoutItem `json:"items"`
+	Items      []CheckoutItem   `json:"items"`
+	CustomerID *int             `json:"customer_id"`
+	Payments   []checkoutPayment `json:"payments"`
 }
 
 type transactionResponse struct {
@@ -70,7 +77,16 @@ func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Reque
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	checkoutReq := CheckoutRequest{Items: req.Items}
+	checkoutReq := CheckoutRequest{
+		Items:      req.Items,
+		CustomerID: req.CustomerID,
+	}
+	for _, p := range req.Payments {
+		checkoutReq.Payments = append(checkoutReq.Payments, CheckoutPayment{
+			Type:   p.Type,
+			Amount: p.Amount,
+		})
+	}
 	txn, err := h.service.Checkout(checkoutReq)
 	if err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())

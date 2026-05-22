@@ -39,8 +39,9 @@ type TransactionRepository interface {
 	FindByID(id int) (*Transaction, error)
 	LockProducts(tx *sql.Tx, ids []int) ([]LockedProduct, error)
 	UpdateStock(tx *sql.Tx, id, qty int) error
-	InsertTransaction(tx *sql.Tx, total int) (int, error)
+	InsertTransaction(tx *sql.Tx, total int, customerID *int) (int, error)
 	InsertDetails(tx *sql.Tx, transactionID int, items []CheckoutItem, products []LockedProduct) error
+	InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error
 }
 
 func NewTransactionRepository(db *sql.DB) TransactionRepository {
@@ -147,10 +148,20 @@ func (r *transactionRepository) UpdateStock(tx *sql.Tx, id, qty int) error {
 	return err
 }
 
-func (r *transactionRepository) InsertTransaction(tx *sql.Tx, total int) (int, error) {
+func (r *transactionRepository) InsertTransaction(tx *sql.Tx, total int, customerID *int) (int, error) {
 	var id int
+	if customerID != nil && *customerID > 0 {
+		err := tx.QueryRow("INSERT INTO transactions (total_amount, customer_id) VALUES ($1, $2) RETURNING id", total, *customerID).Scan(&id)
+		return id, err
+	}
 	err := tx.QueryRow("INSERT INTO transactions (total_amount) VALUES ($1) RETURNING id", total).Scan(&id)
 	return id, err
+}
+
+func (r *transactionRepository) InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error {
+	_, err := tx.Exec("INSERT INTO transaction_payments (transaction_id, payment_type_id, amount) VALUES ($1, $2, $3)",
+		transactionID, paymentTypeID, amount)
+	return err
 }
 
 func (r *transactionRepository) InsertDetails(tx *sql.Tx, transactionID int, items []CheckoutItem, products []LockedProduct) error {
