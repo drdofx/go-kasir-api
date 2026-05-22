@@ -7,7 +7,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// InitDB opens and verifies a PostgreSQL connection.
 func InitDB(connectionString string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", connectionString)
 	if err != nil {

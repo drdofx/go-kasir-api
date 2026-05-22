@@ -1,190 +1,152 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-	"time"
 
-	"go-kasir-api/internal/database"
-	"go-kasir-api/internal/handler"
-	"go-kasir-api/internal/middleware"
-	"go-kasir-api/internal/repository"
-	"go-kasir-api/internal/service"
+	"go-kasir-api/internal/domain/auth"
+	"go-kasir-api/internal/domain/category"
+	"go-kasir-api/internal/domain/product"
+	"go-kasir-api/internal/domain/report"
+	"go-kasir-api/internal/domain/transaction"
+	"go-kasir-api/internal/pkg/database"
+	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 
+	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
 )
 
-type Config struct {
-	Port              string `mapstructure:"PORT"`
-	DBConn            string `mapstructure:"DB_CONN"`
-	CORSAllowedOrigin string `mapstructure:"CORS_ALLOWED_ORIGIN"`
-	LogLevel          string `mapstructure:"LOG_LEVEL"`
-	AdminPassword     string `mapstructure:"ADMIN_PASSWORD"`
-	MigrationsPath    string `mapstructure:"MIGRATIONS_PATH"`
-	JWTSecret         string `mapstructure:"JWT_SECRET"`
-}
-
-func loadConfig() Config {
-	viper.AutomaticEnv()
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-	if _, err := os.Stat(".env"); err == nil {
-		viper.SetConfigFile(".env")
-		if err := viper.ReadInConfig(); err != nil {
-			log.Printf("Warning: failed to read .env file: %v", err)
-		}
-	}
-
-	return Config{
-		Port:              viper.GetString("PORT"),
-		DBConn:            viper.GetString("DB_CONN"),
-		CORSAllowedOrigin: viper.GetString("CORS_ALLOWED_ORIGIN"),
-		LogLevel:          viper.GetString("LOG_LEVEL"),
-		AdminPassword:     viper.GetString("ADMIN_PASSWORD"),
-		MigrationsPath:    viper.GetString("MIGRATIONS_PATH"),
-		JWTSecret:         viper.GetString("JWT_SECRET"),
-	}
-}
-
-func seedAdmin(db *sql.DB, password string) {
-	if password == "" {
-		log.Println("Skipping admin seed: ADMIN_PASSWORD not set")
-		return
-	}
-
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
-		log.Printf("Warning: failed to check user count: %v", err)
-		return
-	}
-	if count > 0 {
-		return
-	}
-
-	hash, err := service.HashPassword(password)
-	if err != nil {
-		log.Printf("Failed to hash seed password: %v", err)
-		return
-	}
-
-	_, err = db.Exec(
-		`INSERT INTO users (username, password_hash, name, role) VALUES ($1, $2, $3, $4)`,
-		"admin", hash, "Administrator", "admin",
-	)
-	if err != nil {
-		log.Printf("Failed to seed admin user: %v", err)
-	} else {
-		log.Println("Seeded default admin user")
-	}
-}
-
 func main() {
-	config := loadConfig()
-	if config.Port == "" {
-		config.Port = "8080"
-	}
-	if config.DBConn == "" {
-		log.Fatal("DB_CONN is required")
-	}
-	if config.JWTSecret == "" {
-		log.Fatal("JWT_SECRET is required")
-	}
+	viper.SetDefault("PORT", "8080")
+	viper.SetDefault("CORS_ALLOWED_ORIGIN", "http://localhost:8080")
+	viper.SetDefault("LOG_LEVEL", "info")
+	viper.SetDefault("MIGRATIONS_PATH", "migrations")
+	viper.AutomaticEnv()
+	viper.SetConfigFile(".env")
+	viper.ReadInConfig()
 
-	db, err := database.InitDB(config.DBConn)
+	logLevel, err := zerolog.ParseLevel(viper.GetString("LOG_LEVEL"))
 	if err != nil {
-		log.Fatal("Failed to initialize database:", err)
+		logLevel = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(logLevel)
+
+	db, err := database.InitDB(viper.GetString("DB_CONN"))
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
 	}
 	defer db.Close()
 
-	if err := database.RunMigrations(db, config.MigrationsPath); err != nil {
-		log.Fatal("Failed to run migrations:", err)
+	if err := database.RunMigrations(db, viper.GetString("MIGRATIONS_PATH")); err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
 	}
 
-	seedAdmin(db, config.AdminPassword)
+	userRepo := auth.NewUserRepository(db)
+	productRepo := product.NewProductRepository(db)
+	categoryRepo := category.NewCategoryRepository(db)
+	transactionRepo := transaction.NewTransactionRepository(db)
 
-	categoryRepo := repository.NewCategoryRepository(db)
-	productRepo := repository.NewProductRepository(db)
-	transactionRepo := repository.NewTransactionRepository(db)
-	userRepo := repository.NewUserRepository(db)
+	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
 
-	categoryService := service.NewCategoryService(categoryRepo)
-	productService := service.NewProductService(productRepo, categoryRepo)
-	transactionService := service.NewTransactionService(transactionRepo)
-	authService := service.NewAuthService(userRepo, config.JWTSecret)
+	authService := auth.NewAuthService(userRepo, viper.GetString("JWT_SECRET"))
+	categoryService := category.NewCategoryService(categoryRepo)
+	productService := product.NewProductService(productRepo, catRepoForProduct)
+	transactionService := transaction.NewTransactionService(transactionRepo)
+	reportService := report.NewReportService(db)
 
-	categoryHandler := handler.NewCategoryHandler(categoryService)
-	productHandler := handler.NewProductHandler(productService)
-	transactionHandler := handler.NewTransactionHandler(transactionService)
-	authHandler := handler.NewAuthHandler(authService)
+	authHandler := auth.NewAuthHandler(authService)
+	productHandler := product.NewProductHandler(productService)
+	categoryHandler := category.NewCategoryHandler(categoryService)
+	transactionHandler := transaction.NewTransactionHandler(transactionService)
+	reportHandler := report.NewReportHandler(reportService)
 
-	jwtAuth := middleware.JWTAuth(authService)
+	corsMiddleware := middleware.CORS(viper.GetString("CORS_ALLOWED_ORIGIN"))
+	jwtMiddleware := middleware.JWTAuth(authService)
 
 	mux := http.NewServeMux()
 
-	// Auth routes (public)
+	// Health & root
+	mux.HandleFunc("/health", handlerHealth)
+	mux.HandleFunc("/", handlerRoot)
+
+	// Old API routes (backward compatibility)
 	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
 	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
 	mux.HandleFunc("/api/auth/me", authHandler.HandleMe)
+	mux.Handle("/api/auth/change-password", middleware.Chain(http.HandlerFunc(authHandler.HandleChangePassword), jwtMiddleware))
+	mux.Handle("/api/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), jwtMiddleware))
+	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtMiddleware))
+	mux.Handle("/api/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), jwtMiddleware))
+	mux.Handle("/api/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtMiddleware))
+	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtMiddleware))
+	mux.Handle("/api/transactions", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactions), jwtMiddleware))
+	mux.Handle("/api/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
+	mux.Handle("/api/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 
-	// Protected API routes (require JWT)
-	mux.Handle("/api/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), jwtAuth))
-	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtAuth))
-	mux.Handle("/api/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), jwtAuth))
-	mux.Handle("/api/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtAuth))
-	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtAuth))
-	mux.Handle("/api/report/hari-ini", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTodayReport), jwtAuth))
-	mux.Handle("/api/report", middleware.Chain(http.HandlerFunc(transactionHandler.HandleReport), jwtAuth))
+	// V1 API routes
+	mux.HandleFunc("/api/v1/auth/login", authHandler.HandleLogin)
+	mux.HandleFunc("/api/v1/auth/logout", authHandler.HandleLogout)
+	mux.HandleFunc("/api/v1/auth/me", authHandler.HandleMe)
+	mux.Handle("/api/v1/auth/change-password", middleware.Chain(http.HandlerFunc(authHandler.HandleChangePassword), jwtMiddleware))
+	mux.Handle("/api/v1/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), jwtMiddleware))
+	mux.Handle("/api/v1/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtMiddleware))
+	mux.Handle("/api/v1/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), jwtMiddleware))
+	mux.Handle("/api/v1/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtMiddleware))
+	mux.Handle("/api/v1/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtMiddleware))
+	mux.Handle("/api/v1/transactions", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactions), jwtMiddleware))
+	mux.Handle("/api/v1/transactions/", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactionByID), jwtMiddleware))
+	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
+	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 
-	// Static pages
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/health", http.StatusTemporaryRedirect)
-	})
-	mux.HandleFunc("/health", handler.Health)
-	mux.HandleFunc("/openapi.yaml", handler.OpenAPI)
-	mux.HandleFunc("/docs", handler.Docs)
-
-	rootHandler := middleware.Chain(
-		mux,
+	wrapped := middleware.Chain(mux,
 		middleware.RequestID(),
-		middleware.CORS(config.CORSAllowedOrigin),
+		corsMiddleware,
 		middleware.SecurityHeaders(),
-		middleware.Logger(config.LogLevel),
+		middleware.Logger(viper.GetString("LOG_LEVEL")),
 	)
 
-	addr := "0.0.0.0:" + config.Port
-
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      rootHandler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+	server := &http.Server{
+		Addr:    ":" + viper.GetString("PORT"),
+		Handler: wrapped,
 	}
 
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
-
 	go func() {
-		fmt.Println("Server running at", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Failed to start server: %v", err)
+		log.Printf("server starting on port %s", viper.GetString("PORT"))
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
 		}
 	}()
 
-	<-done
-	fmt.Println("\nShutting down server...")
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("shutting down server...")
+	server.Close()
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+type categoryRepoWrapper struct {
+	repo category.CategoryRepository
+}
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+func (w *categoryRepoWrapper) FindByID(id int) (*product.Category, error) {
+	c, err := w.repo.FindByID(id)
+	if err != nil {
+		return nil, err
 	}
+	if c == nil {
+		return nil, nil
+	}
+	return &product.Category{ID: c.ID, Name: c.Name, Description: c.Description}, nil
+}
+
+func handlerHealth(w http.ResponseWriter, r *http.Request) {
+	helpers.WriteJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+}
+
+func handlerRoot(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/health", http.StatusFound)
 }

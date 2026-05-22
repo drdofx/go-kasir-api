@@ -10,13 +10,11 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
-// RunMigrations runs all pending migrations from the migrations directory.
 func RunMigrations(db *sql.DB, migrationsPath string) error {
 	if migrationsPath == "" {
 		migrationsPath = "migrations"
 	}
 
-	// Ensure the path is absolute or prefixed with file://
 	if _, err := os.Stat(migrationsPath); os.IsNotExist(err) {
 		return fmt.Errorf("migrations directory not found: %s", migrationsPath)
 	}

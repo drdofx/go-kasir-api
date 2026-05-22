@@ -12,12 +12,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// Middleware wraps an HTTP handler.
 type Middleware func(http.Handler) http.Handler
 
 const requestIDHeader = "X-Request-Id"
 
-// SecurityHeaders sets security-related HTTP headers.
 func SecurityHeaders() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +27,6 @@ func SecurityHeaders() Middleware {
 	}
 }
 
-// Chain applies middlewares from left to right.
 func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	for i := len(middlewares) - 1; i >= 0; i-- {
 		h = middlewares[i](h)
@@ -37,7 +34,6 @@ func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-// CORS adds CORS headers and handles preflight requests.
 func CORS(allowedOrigin string) Middleware {
 	origin := strings.TrimSpace(allowedOrigin)
 	if origin == "" {
@@ -60,7 +56,6 @@ func CORS(allowedOrigin string) Middleware {
 	}
 }
 
-// Logger logs method, path, status code, and duration for each request.
 func Logger(level string) Middleware {
 	lvl, err := zerolog.ParseLevel(strings.ToLower(strings.TrimSpace(level)))
 	if err != nil {
@@ -92,7 +87,6 @@ func Logger(level string) Middleware {
 	}
 }
 
-// RequestID sets a request id header and stores it on context.
 func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +131,6 @@ func clientIP(r *http.Request) string {
 		return hostPort
 	}
 	if strings.Count(hostPort, ":") > 1 && strings.HasPrefix(hostPort, "[") {
-		// IPv6 host format [::1]:12345
 		return strings.Trim(hostPort[:lastColon], "[]")
 	}
 	return hostPort[:lastColon]
