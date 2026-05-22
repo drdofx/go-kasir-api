@@ -34,6 +34,8 @@ type userJSON struct {
 	Username  string `json:"username"`
 	Name      string `json:"name"`
 	Role      string `json:"role"`
+	OrgID     int    `json:"org_id"`
+	BranchID  *int   `json:"branch_id,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -73,6 +75,8 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			Username:  user.Username,
 			Name:      user.Name,
 			Role:      user.Role,
+			OrgID:     user.OrganizationID,
+			BranchID:  user.BranchID,
 			CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		},
 	})
@@ -93,6 +97,8 @@ func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
 		Username:  user.Username,
 		Name:      user.Name,
 		Role:      user.Role,
+		OrgID:     user.OrgID,
+		BranchID:  user.BranchID,
 		CreatedAt: user.CreatedAt,
 	})
 }
@@ -109,7 +115,8 @@ func (h *AuthHandler) HandleUsers(w http.ResponseWriter, r *http.Request) {
 		for i, u := range users {
 			res[i] = userJSON{
 				ID: u.ID, Username: u.Username, Name: u.Name,
-				Role: u.Role, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				Role: u.Role, OrgID: u.OrganizationID, BranchID: u.BranchID,
+				CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			}
 		}
 		helpers.WriteJSON(w, http.StatusOK, res)
@@ -162,6 +169,31 @@ func (h *AuthHandler) HandleUpdateUserRole(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, map[string]string{"message": "role updated"})
+}
+
+func (h *AuthHandler) HandleSwitchBranch(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req struct {
+		BranchID int `json:"branch_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.BranchID <= 0 {
+		helpers.WriteError(w, http.StatusBadRequest, "branch_id is required")
+		return
+	}
+	token, err := h.service.SwitchBranch(user.ID, req.BranchID)
+	if err != nil {
+		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (h *AuthHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {

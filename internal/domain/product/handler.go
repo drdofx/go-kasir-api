@@ -19,17 +19,22 @@ func NewProductHandler(service *ProductService) *ProductHandler {
 type productRequest struct {
     Name       string `json:"name"`
     Price      int    `json:"price"`
-    Stock      int    `json:"stock"`
     CategoryID *int   `json:"category_id"`
 }
 
+type productStockResponse struct {
+    BranchID   int    `json:"branch_id"`
+    BranchName string `json:"branch_name,omitempty"`
+    Stock      int    `json:"stock"`
+}
+
 type productResponse struct {
-    ID           int    `json:"id"`
-    Name         string `json:"name"`
-    Price        int    `json:"price"`
-    Stock        int    `json:"stock"`
-    CategoryID   *int   `json:"category_id"`
-    CategoryName string `json:"category_name"`
+    ID           int                   `json:"id"`
+    Name         string                `json:"name"`
+    Price        int                   `json:"price"`
+    CategoryID   *int                  `json:"category_id"`
+    CategoryName string                `json:"category_name"`
+    Stocks       []productStockResponse `json:"stocks,omitempty"`
 }
 
 func toResponse(p Product) productResponse {
@@ -37,7 +42,6 @@ func toResponse(p Product) productResponse {
         ID:           p.ID,
         Name:         p.Name,
         Price:        p.Price,
-        Stock:        p.Stock,
         CategoryID:   p.CategoryID,
         CategoryName: p.CategoryName,
     }
@@ -104,35 +108,35 @@ func (h *ProductHandler) create(w http.ResponseWriter, r *http.Request) {
         helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
         return
     }
-    p := &Product{Name: req.Name, Price: req.Price, Stock: req.Stock, CategoryID: req.CategoryID}
-    if err := h.service.Create(p); err != nil {
-        helpers.WriteError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-    helpers.WriteJSON(w, http.StatusCreated, toResponse(*p))
+	p := &Product{Name: req.Name, Price: req.Price, CategoryID: req.CategoryID}
+	if err := h.service.Create(p); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	helpers.WriteJSON(w, http.StatusCreated, toResponse(*p))
 }
 
 func (h *ProductHandler) getByID(w http.ResponseWriter, id int) {
-    p, err := h.service.FindByID(id)
-    if err != nil {
-        helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
-        return
-    }
-    if p == nil {
-        helpers.WriteError(w, http.StatusNotFound, "product not found")
-        return
-    }
-    helpers.WriteJSON(w, http.StatusOK, toResponse(*p))
+	p, err := h.service.FindByID(id)
+	if err != nil {
+		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if p == nil {
+		helpers.WriteError(w, http.StatusNotFound, "product not found")
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, toResponse(*p))
 }
 
 func (h *ProductHandler) update(w http.ResponseWriter, r *http.Request, id int) {
-    var req productRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
-        return
-    }
-    p := &Product{ID: id, Name: req.Name, Price: req.Price, Stock: req.Stock, CategoryID: req.CategoryID}
-    if err := h.service.Update(p); err != nil {
+	var req productRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	p := &Product{ID: id, Name: req.Name, Price: req.Price, CategoryID: req.CategoryID}
+	if err := h.service.Update(p); err != nil {
         helpers.WriteError(w, http.StatusBadRequest, err.Error())
         return
     }

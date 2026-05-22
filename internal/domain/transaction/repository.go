@@ -29,6 +29,11 @@ type LockedProduct struct {
 	Stock int
 }
 
+type BranchStock struct {
+	ProductID int
+	Stock     int
+}
+
 type transactionRepository struct {
 	db *sql.DB
 }
@@ -38,7 +43,8 @@ type TransactionRepository interface {
 	FindAll() ([]Transaction, error)
 	FindByID(id int) (*Transaction, error)
 	LockProducts(tx *sql.Tx, ids []int) ([]LockedProduct, error)
-	UpdateStock(tx *sql.Tx, id, qty int) error
+	LockBranchStocks(tx *sql.Tx, branchID int, productIDs []int) ([]BranchStock, error)
+	UpdateBranchStock(tx *sql.Tx, branchID, productID, qty int) error
 	InsertTransaction(tx *sql.Tx, total int, customerID *int) (int, error)
 	InsertDetails(tx *sql.Tx, transactionID int, items []CheckoutItem, products []LockedProduct) error
 	InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error
@@ -124,6 +130,36 @@ func (r *transactionRepository) getDetails(transactionID int) ([]DetailItem, err
 		details = append(details, d)
 	}
 	return details, rows.Err()
+}
+
+func (r *transactionRepository) LockBranchStocks(tx *sql.Tx, branchID int, productIDs []int) ([]BranchStock, error) {
+	phs := make([]string, len(productIDs))
+	args := make([]interface{}, 0, len(productIDs)+1)
+	args = append(args, branchID)
+	for i, id := range productIDs {
+		phs[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, id)
+	}
+	query := fmt.Sprintf("SELECT product_id, stock FROM product_stocks WHERE branch_id = $1 AND product_id IN (%s) FOR UPDATE", strings.Join(phs, ","))
+	rows, err := tx.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stocks []BranchStock
+	for rows.Next() {
+		var bs BranchStock
+		if err := rows.Scan(&bs.ProductID, &bs.Stock); err != nil {
+			return nil, err
+		}
+		stocks = append(stocks, bs)
+	}
+	return stocks, rows.Err()
+}
+
+func (r *transactionRepository) UpdateBranchStock(tx *sql.Tx, branchID, productID, qty int) error {
+	_, err := tx.Exec("UPDATE product_stocks SET stock = stock - $1 WHERE branch_id = $2 AND product_id = $3 AND stock >= $1", qty, branchID, productID)
+	return err
 }
 
 func (r *transactionRepository) LockProducts(tx *sql.Tx, ids []int) ([]LockedProduct, error) {

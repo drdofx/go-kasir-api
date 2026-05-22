@@ -1,0 +1,11 @@
+ALTER TABLE users DROP COLUMN IF EXISTS branch_id;
+ALTER TABLE users DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE categories DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE products DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE transactions DROP COLUMN IF EXISTS branch_id;
+ALTER TABLE transactions DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE customers DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE suppliers DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE purchase_orders DROP COLUMN IF EXISTS branch_id;
+ALTER TABLE purchase_orders DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE returns DROP COLUMN IF EXISTS organization_id;

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"log"
 	"net/http"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"syscall"
 
 	"go-kasir-api/internal/domain/auth"
+	"go-kasir-api/internal/domain/branch"
 	"go-kasir-api/internal/domain/category"
 	"go-kasir-api/internal/domain/customer"
 	"go-kasir-api/internal/domain/inventory"
@@ -51,6 +53,7 @@ func main() {
 	if err := database.RunMigrations(db, viper.GetString("MIGRATIONS_PATH")); err != nil {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
+	seedDefaultOrg(db)
 
 	userRepo := auth.NewUserRepository(db)
 	productRepo := product.NewProductRepository(db)
@@ -63,6 +66,7 @@ func main() {
 	purchaseOrderRepo := purchaseorder.NewPurchaseOrderRepository(db)
 	inventoryRepo := inventory.NewInventoryRepository(db)
 	receiptRepo := receipt.NewReceiptRepository(db)
+	branchRepo := branch.NewBranchRepository(db)
 
 	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
 
@@ -75,6 +79,7 @@ func main() {
 	supplierService := supplier.NewSupplierService(supplierRepo)
 	poService := purchaseorder.NewPOService(purchaseOrderRepo, supplierRepo)
 	inventoryService := inventory.NewInventoryService(inventoryRepo)
+	branchService := branch.NewBranchService(branchRepo)
 	transactionService := transaction.NewTransactionService(transactionRepo, customerRepo, paymentService, receiptRepo)
 	reportService := report.NewReportService(db)
 
@@ -88,6 +93,7 @@ func main() {
 	poHandler := purchaseorder.NewPOHandler(poService)
 	inventoryHandler := inventory.NewInventoryHandler(inventoryService)
 	receiptHandler := receipt.NewReceiptHandler(receipt.NewReceiptService(receiptRepo))
+	branchHandler := branch.NewBranchHandler(branchService)
 	transactionHandler := transaction.NewTransactionHandler(transactionService)
 	reportHandler := report.NewReportHandler(reportService)
 
@@ -140,6 +146,9 @@ func main() {
 	mux.Handle("/api/v1/users", middleware.Chain(http.HandlerFunc(authHandler.HandleUsers), jwtMiddleware))
 	mux.Handle("/api/v1/users/", middleware.Chain(http.HandlerFunc(authHandler.HandleUpdateUserRole), jwtMiddleware))
 	mux.Handle("/api/v1/receipts/", middleware.Chain(http.HandlerFunc(receiptHandler.HandleGetReceipt), jwtMiddleware))
+	mux.Handle("/api/v1/auth/switch-branch", middleware.Chain(http.HandlerFunc(authHandler.HandleSwitchBranch), jwtMiddleware))
+	mux.Handle("/api/v1/branches", middleware.Chain(http.HandlerFunc(branchHandler.HandleBranches), jwtMiddleware))
+	mux.Handle("/api/v1/branches/", middleware.Chain(http.HandlerFunc(branchHandler.HandleBranchByID), jwtMiddleware))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 	mux.Handle("/api/v1/report/dashboard", middleware.Chain(http.HandlerFunc(reportHandler.HandleDashboard), jwtMiddleware))
@@ -196,4 +205,34 @@ func handlerHealth(w http.ResponseWriter, r *http.Request) {
 
 func handlerRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/health", http.StatusFound)
+}
+
+func seedDefaultOrg(db *sql.DB) {
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM organizations").Scan(&count)
+	if count > 0 {
+		return
+	}
+	var orgID int
+	err := db.QueryRow("INSERT INTO organizations (name, slug) VALUES ('Default Organization', 'default') RETURNING id").Scan(&orgID)
+	if err != nil {
+		log.Printf("seed org: %v", err)
+		return
+	}
+	var branchID int
+	err = db.QueryRow("INSERT INTO branches (organization_id, name, code) VALUES ($1, 'Main Branch', 'main') RETURNING id", orgID).Scan(&branchID)
+	if err != nil {
+		log.Printf("seed branch: %v", err)
+		return
+	}
+	db.Exec("UPDATE users SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	db.Exec("UPDATE categories SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	db.Exec("UPDATE products SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	db.Exec("UPDATE transactions SET organization_id = $1, branch_id = $2 WHERE organization_id IS NULL", orgID, branchID)
+	db.Exec("UPDATE customers SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	db.Exec("UPDATE suppliers SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	db.Exec("UPDATE purchase_orders SET organization_id = $1, branch_id = $2 WHERE organization_id IS NULL", orgID, branchID)
+	db.Exec("UPDATE returns SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	db.Exec(`INSERT INTO product_stocks (product_id, branch_id, stock) SELECT id, $1, 0 FROM products WHERE id NOT IN (SELECT product_id FROM product_stocks WHERE branch_id = $1)`, branchID)
+	log.Printf("seeded default org (id=%d) and branch (id=%d)", orgID, branchID)
 }

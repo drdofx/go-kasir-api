@@ -35,12 +35,17 @@ func (s *AuthService) Login(username, password string) (string, *User, error) {
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return "", nil, errors.New("invalid credentials")
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	claims := jwt.MapClaims{
 		"user_id":  user.ID,
 		"username": user.Username,
 		"role":     user.Role,
+		"org_id":   user.OrganizationID,
 		"exp":      time.Now().Add(24 * time.Hour).Unix(),
-	})
+	}
+	if user.BranchID != nil {
+		claims["branch_id"] = *user.BranchID
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenStr, err := token.SignedString([]byte(s.jwtSecret))
 	if err != nil {
 		return "", nil, err
@@ -48,37 +53,66 @@ func (s *AuthService) Login(username, password string) (string, *User, error) {
 	return tokenStr, user, nil
 }
 
-func (s *AuthService) ValidateToken(tokenStr string) (int, string, string, error) {
-    token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-        if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-            return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-        }
-        return []byte(s.jwtSecret), nil
-    })
-    if err != nil || !token.Valid {
-        return 0, "", "", ErrInvalidToken
-    }
-    claims, ok := token.Claims.(jwt.MapClaims)
-    if !ok {
-        return 0, "", "", ErrInvalidToken
-    }
-    userIDFloat, ok := claims["user_id"].(float64)
-    if !ok {
-        return 0, "", "", ErrInvalidToken
-    }
-    username, ok := claims["username"].(string)
-    if !ok {
-        return 0, "", "", ErrInvalidToken
-    }
-    role, ok := claims["role"].(string)
-    if !ok {
-        return 0, "", "", ErrInvalidToken
-    }
-    return int(userIDFloat), username, role, nil
+func (s *AuthService) ValidateToken(tokenStr string) (int, string, string, int, *int, error) {
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return []byte(s.jwtSecret), nil
+	})
+	if err != nil || !token.Valid {
+		return 0, "", "", 0, nil, ErrInvalidToken
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return 0, "", "", 0, nil, ErrInvalidToken
+	}
+	uid, ok := claims["user_id"].(float64)
+	if !ok {
+		return 0, "", "", 0, nil, ErrInvalidToken
+	}
+	username, ok := claims["username"].(string)
+	if !ok {
+		return 0, "", "", 0, nil, ErrInvalidToken
+	}
+	role, ok := claims["role"].(string)
+	if !ok {
+		return 0, "", "", 0, nil, ErrInvalidToken
+	}
+	orgID, ok := claims["org_id"].(float64)
+	if !ok {
+		return 0, "", "", 0, nil, ErrInvalidToken
+	}
+	var branchID *int
+	if bid, ok := claims["branch_id"].(float64); ok {
+		b := int(bid)
+		branchID = &b
+	}
+	return int(uid), username, role, int(orgID), branchID, nil
 }
 
 func (s *AuthService) FindAllUsers() ([]User, error) {
 	return s.userRepo.FindAll()
+}
+
+func (s *AuthService) SwitchBranch(userID, newBranchID int) (string, error) {
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return "", err
+	}
+	if user == nil {
+		return "", ErrUserNotFound
+	}
+	claims := jwt.MapClaims{
+		"user_id":   user.ID,
+		"username":  user.Username,
+		"role":      user.Role,
+		"org_id":    user.OrganizationID,
+		"branch_id": newBranchID,
+		"exp":       time.Now().Add(24 * time.Hour).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.jwtSecret))
 }
 
 func (s *AuthService) CreateUser(username, password, name, role string) (*User, error) {

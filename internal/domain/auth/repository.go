@@ -8,13 +8,15 @@ import (
 )
 
 type User struct {
-	ID           int
-	Username     string
-	PasswordHash string
-	Name         string
-	Role         string
-	Permissions  []string
-	CreatedAt    time.Time
+	ID             int
+	Username       string
+	PasswordHash   string
+	Name           string
+	Role           string
+	Permissions    []string
+	OrganizationID int
+	BranchID       *int
+	CreatedAt      time.Time
 }
 
 type userRepository struct {
@@ -35,7 +37,7 @@ func NewUserRepository(db *sql.DB) UserRepository {
 }
 
 func (r *userRepository) FindAll() ([]User, error) {
-	rows, err := r.db.Query("SELECT id, username, password_hash, name, role, COALESCE(permissions, '{}'), created_at FROM users ORDER BY id")
+	rows, err := r.db.Query("SELECT id, username, password_hash, name, role, COALESCE(permissions, '{}'), COALESCE(organization_id, 0), branch_id, created_at FROM users ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +45,7 @@ func (r *userRepository) FindAll() ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.OrganizationID, &u.BranchID, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -52,9 +54,9 @@ func (r *userRepository) FindAll() ([]User, error) {
 }
 
 func (r *userRepository) FindByID(id int) (*User, error) {
-	row := r.db.QueryRow("SELECT id, username, password_hash, name, role, COALESCE(permissions, '{}'), created_at FROM users WHERE id = $1", id)
+	row := r.db.QueryRow("SELECT id, username, password_hash, name, role, COALESCE(permissions, '{}'), COALESCE(organization_id, 0), branch_id, created_at FROM users WHERE id = $1", id)
 	u := &User{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.OrganizationID, &u.BranchID, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -62,9 +64,9 @@ func (r *userRepository) FindByID(id int) (*User, error) {
 }
 
 func (r *userRepository) FindByUsername(username string) (*User, error) {
-	row := r.db.QueryRow("SELECT id, username, password_hash, name, role, COALESCE(permissions, '{}'), created_at FROM users WHERE username = $1", username)
+	row := r.db.QueryRow("SELECT id, username, password_hash, name, role, COALESCE(permissions, '{}'), COALESCE(organization_id, 0), branch_id, created_at FROM users WHERE username = $1", username)
 	u := &User{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.OrganizationID, &u.BranchID, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

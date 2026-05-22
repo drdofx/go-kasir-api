@@ -5,7 +5,6 @@ import "errors"
 var (
     ErrProductNameRequired = errors.New("product name is required")
     ErrNegativePrice       = errors.New("price must be non-negative")
-    ErrNegativeStock       = errors.New("stock must be non-negative")
     ErrCategoryNotFound    = errors.New("category not found")
     ErrProductNotFound     = errors.New("product not found")
 )
@@ -44,9 +43,6 @@ func (s *ProductService) Create(p *Product) error {
     if p.Price < 0 {
         return ErrNegativePrice
     }
-    if p.Stock < 0 {
-        return ErrNegativeStock
-    }
     if p.CategoryID != nil && *p.CategoryID > 0 {
         cat, err := s.categoryRepo.FindByID(*p.CategoryID)
         if err != nil {
@@ -66,9 +62,6 @@ func (s *ProductService) Update(p *Product) error {
     if p.Price < 0 {
         return ErrNegativePrice
     }
-    if p.Stock < 0 {
-        return ErrNegativeStock
-    }
     existing, err := s.repo.FindByID(p.ID)
     if err != nil {
         return err
@@ -86,6 +79,10 @@ func (s *ProductService) Update(p *Product) error {
         }
     }
     return s.repo.Update(p)
+}
+
+func (s *ProductService) GetStocks(productID int) ([]ProductStock, error) {
+	return s.repo.GetStocks(productID)
 }
 
 func (s *ProductService) Delete(id int) error {

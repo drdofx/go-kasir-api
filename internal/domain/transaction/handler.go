@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type TransactionHandler struct {
@@ -72,6 +73,11 @@ func toTransactionResponses(txns []Transaction) []transactionResponse {
 }
 
 func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil || user.BranchID == nil {
+		helpers.WriteError(w, http.StatusBadRequest, "no active branch")
+		return
+	}
 	var req checkoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -80,6 +86,7 @@ func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Reque
 	checkoutReq := CheckoutRequest{
 		Items:      req.Items,
 		CustomerID: req.CustomerID,
+		BranchID:   *user.BranchID,
 	}
 	for _, p := range req.Payments {
 		checkoutReq.Payments = append(checkoutReq.Payments, CheckoutPayment{

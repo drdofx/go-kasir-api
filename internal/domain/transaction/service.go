@@ -31,8 +31,9 @@ type CheckoutPayment struct {
 }
 
 type CheckoutRequest struct {
-	Items      []CheckoutItem   `json:"items"`
-	CustomerID *int             `json:"customer_id"`
+	Items      []CheckoutItem    `json:"items"`
+	CustomerID *int              `json:"customer_id"`
+	BranchID   int               `json:"branch_id"`
 	Payments   []CheckoutPayment `json:"payments"`
 }
 
@@ -102,13 +103,27 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 		productMap[p.ID] = p
 	}
 	for _, item := range req.Items {
-		p, ok := productMap[item.ProductID]
-		if !ok {
+		if _, ok := productMap[item.ProductID]; !ok {
 			return nil, fmt.Errorf("%w: product %d", ErrProductNotFound, item.ProductID)
 		}
-		if p.Stock < item.Quantity {
-			return nil, fmt.Errorf("%w for product %s (available: %d, requested: %d)",
-				ErrInsufficientStock, p.Name, p.Stock, item.Quantity)
+	}
+	// Lock branch stocks
+	branchStocks, err := s.repo.LockBranchStocks(tx, req.BranchID, productIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lock branch stocks: %w", err)
+	}
+	bsMap := make(map[int]int)
+	for _, bs := range branchStocks {
+		bsMap[bs.ProductID] = bs.Stock
+	}
+	for _, item := range req.Items {
+		available, ok := bsMap[item.ProductID]
+		if !ok {
+			return nil, fmt.Errorf("%w: product %d has no stock in this branch", ErrProductNotFound, item.ProductID)
+		}
+		if available < item.Quantity {
+			return nil, fmt.Errorf("%w for product %d (available: %d, requested: %d)",
+				ErrInsufficientStock, item.ProductID, available, item.Quantity)
 		}
 	}
 	var totalAmount int
@@ -119,7 +134,7 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 			return nil, ErrAmountOverflow
 		}
 		totalAmount += subtotal
-		if err := s.repo.UpdateStock(tx, item.ProductID, item.Quantity); err != nil {
+		if err := s.repo.UpdateBranchStock(tx, req.BranchID, item.ProductID, item.Quantity); err != nil {
 			return nil, fmt.Errorf("failed to update stock for product %d: %w", item.ProductID, err)
 		}
 	}
