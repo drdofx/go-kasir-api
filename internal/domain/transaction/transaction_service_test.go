@@ -90,11 +90,26 @@ func (m *mockPaymentSvc) InsertPayment(tx *sql.Tx, transactionID, paymentTypeID,
 	return args.Error(0)
 }
 
+type mockReceiptGen struct {
+	mock.Mock
+}
+
+func (m *mockReceiptGen) GenerateReceiptNumber(tx *sql.Tx) (string, error) {
+	args := m.Called(tx)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockReceiptGen) InsertReceipt(tx *sql.Tx, transactionID int, receiptNumber string) error {
+	args := m.Called(tx, transactionID, receiptNumber)
+	return args.Error(0)
+}
+
 func TestCheckout_EmptyItems(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	_, err := svc.Checkout(CheckoutRequest{Items: []CheckoutItem{}})
 	assert.ErrorIs(t, err, ErrCheckoutEmpty)
 }
@@ -103,7 +118,8 @@ func TestCheckout_TooManyItems(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	items := make([]CheckoutItem, 101)
 	for i := range items {
 		items[i] = CheckoutItem{ProductID: i + 1, Quantity: 1}
@@ -116,7 +132,8 @@ func TestCheckout_InvalidQuantity(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	_, err := svc.Checkout(CheckoutRequest{Items: []CheckoutItem{{ProductID: 1, Quantity: 0}}})
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidQuantity)
@@ -134,13 +151,16 @@ func TestCheckout_Success(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	products := []LockedProduct{{ID: 1, Name: "Kopi", Price: 10000, Stock: 50}}
 	repo.On("BeginTx").Return(realTx, nil)
 	repo.On("LockProducts", realTx, []int{1}).Return(products, nil)
 	repo.On("UpdateStock", realTx, 1, 2).Return(nil)
 	repo.On("InsertTransaction", realTx, 20000, mock.MatchedBy(func(p *int) bool { return p == nil })).Return(1, nil)
 	repo.On("InsertDetails", realTx, 1, []CheckoutItem{{ProductID: 1, Quantity: 2}}, products).Return(nil)
+	receiptGen.On("GenerateReceiptNumber", realTx).Return("INV-20260522-0001", nil)
+	receiptGen.On("InsertReceipt", realTx, 1, "INV-20260522-0001").Return(nil)
 	repo.On("FindByID", 1).Return(&Transaction{ID: 1, TotalAmount: 20000}, nil)
 	txn, err := svc.Checkout(CheckoutRequest{Items: []CheckoutItem{{ProductID: 1, Quantity: 2}}})
 	assert.NoError(t, err)
@@ -160,7 +180,8 @@ func TestCheckout_WithCustomer(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	customerID := 1
 	products := []LockedProduct{{ID: 1, Name: "Kopi", Price: 10000, Stock: 50}}
 	customerRepo.On("FindByID", 1).Return(&customer.Customer{ID: 1, Name: "Budi"}, nil)
@@ -169,6 +190,8 @@ func TestCheckout_WithCustomer(t *testing.T) {
 	repo.On("UpdateStock", realTx, 1, 2).Return(nil)
 	repo.On("InsertTransaction", realTx, 20000, &customerID).Return(1, nil)
 	repo.On("InsertDetails", realTx, 1, []CheckoutItem{{ProductID: 1, Quantity: 2}}, products).Return(nil)
+	receiptGen.On("GenerateReceiptNumber", realTx).Return("INV-20260522-0002", nil)
+	receiptGen.On("InsertReceipt", realTx, 1, "INV-20260522-0002").Return(nil)
 	repo.On("FindByID", 1).Return(&Transaction{ID: 1, TotalAmount: 20000}, nil)
 	txn, err := svc.Checkout(CheckoutRequest{Items: []CheckoutItem{{ProductID: 1, Quantity: 2}}, CustomerID: &customerID})
 	assert.NoError(t, err)
@@ -180,7 +203,8 @@ func TestCheckout_CustomerNotFound(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	customerID := 999
 	customerRepo.On("FindByID", 999).Return(nil, nil)
 	_, err := svc.Checkout(CheckoutRequest{Items: []CheckoutItem{{ProductID: 1, Quantity: 1}}, CustomerID: &customerID})
@@ -199,7 +223,8 @@ func TestCheckout_WithPayments(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	products := []LockedProduct{{ID: 1, Name: "Kopi", Price: 10000, Stock: 50}}
 	repo.On("BeginTx").Return(realTx, nil)
 	repo.On("LockProducts", realTx, []int{1}).Return(products, nil)
@@ -209,6 +234,9 @@ func TestCheckout_WithPayments(t *testing.T) {
 	repo.On("FindByID", 1).Return(&Transaction{ID: 1, TotalAmount: 20000}, nil)
 	paymentSvc.On("GetPaymentTypeIDByName", "cash").Return(1, nil)
 	repo.On("InsertPayment", realTx, 1, 1, 20000).Return(nil)
+	receiptGen.On("GenerateReceiptNumber", realTx).Return("INV-20260522-0003", nil)
+	receiptGen.On("InsertReceipt", realTx, 1, "INV-20260522-0003").Return(nil)
+	repo.On("FindByID", 1).Return(&Transaction{ID: 1, TotalAmount: 20000}, nil)
 	txn, err := svc.Checkout(CheckoutRequest{
 		Items:    []CheckoutItem{{ProductID: 1, Quantity: 2}},
 		Payments: []CheckoutPayment{{Type: "cash", Amount: 20000}},
@@ -230,7 +258,8 @@ func TestCheckout_PaymentMismatch(t *testing.T) {
 	repo := new(mockTransactionRepo)
 	customerRepo := new(mockCustomerRepoForTransaction)
 	paymentSvc := new(mockPaymentSvc)
-	svc := NewTransactionService(repo, customerRepo, paymentSvc)
+	receiptGen := new(mockReceiptGen)
+	svc := NewTransactionService(repo, customerRepo, paymentSvc, receiptGen)
 	products := []LockedProduct{{ID: 1, Name: "Kopi", Price: 10000, Stock: 50}}
 	repo.On("BeginTx").Return(realTx, nil)
 	repo.On("LockProducts", realTx, []int{1}).Return(products, nil)

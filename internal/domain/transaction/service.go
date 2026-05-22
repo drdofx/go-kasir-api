@@ -45,16 +45,22 @@ type PaymentService interface {
 	InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error
 }
 
+type ReceiptGenerator interface {
+	GenerateReceiptNumber(tx *sql.Tx) (string, error)
+	InsertReceipt(tx *sql.Tx, transactionID int, receiptNumber string) error
+}
+
 const maxItemsPerCheckout = 100
 
 type TransactionService struct {
-	repo         TransactionRepository
-	customerRepo CustomerRepository
-	paymentSvc   PaymentService
+	repo             TransactionRepository
+	customerRepo     CustomerRepository
+	paymentSvc       PaymentService
+	receiptGenerator ReceiptGenerator
 }
 
-func NewTransactionService(repo TransactionRepository, customerRepo CustomerRepository, paymentSvc PaymentService) *TransactionService {
-	return &TransactionService{repo: repo, customerRepo: customerRepo, paymentSvc: paymentSvc}
+func NewTransactionService(repo TransactionRepository, customerRepo CustomerRepository, paymentSvc PaymentService, receiptGen ReceiptGenerator) *TransactionService {
+	return &TransactionService{repo: repo, customerRepo: customerRepo, paymentSvc: paymentSvc, receiptGenerator: receiptGen}
 }
 
 func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error) {
@@ -151,6 +157,13 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 		if err := s.repo.InsertPayment(tx, transactionID, typeID, p.Amount); err != nil {
 			return nil, fmt.Errorf("failed to insert payment: %w", err)
 		}
+	}
+	receiptNumber, err := s.receiptGenerator.GenerateReceiptNumber(tx)
+	if err != nil {
+		return nil, fmt.Errorf("generate receipt: %w", err)
+	}
+	if err := s.receiptGenerator.InsertReceipt(tx, transactionID, receiptNumber); err != nil {
+		return nil, fmt.Errorf("insert receipt: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
