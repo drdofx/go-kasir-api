@@ -13,6 +13,7 @@ import (
 	"go-kasir-api/internal/domain/payment"
 	"go-kasir-api/internal/domain/product"
 	"go-kasir-api/internal/domain/report"
+	"go-kasir-api/internal/domain/returns"
 	"go-kasir-api/internal/domain/transaction"
 	"go-kasir-api/internal/pkg/database"
 	"go-kasir-api/internal/pkg/helpers"
@@ -53,6 +54,7 @@ func main() {
 	transactionRepo := transaction.NewTransactionRepository(db)
 	customerRepo := customer.NewCustomerRepository(db)
 	paymentRepo := payment.NewPaymentRepository(db)
+	returnRepo := returns.NewReturnRepository(db)
 
 	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
 
@@ -61,6 +63,7 @@ func main() {
 	productService := product.NewProductService(productRepo, catRepoForProduct)
 	customerService := customer.NewCustomerService(customerRepo)
 	paymentService := payment.NewPaymentService(paymentRepo)
+	returnService := returns.NewReturnService(returnRepo, transactionRepo)
 	transactionService := transaction.NewTransactionService(transactionRepo, customerRepo, paymentService)
 	reportService := report.NewReportService(db)
 
@@ -69,6 +72,7 @@ func main() {
 	categoryHandler := category.NewCategoryHandler(categoryService)
 	customerHandler := customer.NewCustomerHandler(customerService)
 	paymentHandler := payment.NewPaymentHandler(paymentService)
+	returnHandler := returns.NewReturnHandler(returnService)
 	transactionHandler := transaction.NewTransactionHandler(transactionService)
 	reportHandler := report.NewReportHandler(reportService)
 
@@ -110,6 +114,8 @@ func main() {
 	mux.Handle("/api/v1/customers", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomers), jwtMiddleware))
 	mux.Handle("/api/v1/customers/", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomerByID), jwtMiddleware))
 	mux.Handle("/api/v1/payment-types", middleware.Chain(http.HandlerFunc(paymentHandler.HandlePaymentTypes), jwtMiddleware))
+	mux.Handle("/api/v1/returns", middleware.Chain(http.HandlerFunc(returnHandler.HandleReturns), jwtMiddleware))
+	mux.Handle("/api/v1/returns/", middleware.Chain(http.HandlerFunc(returnHandler.HandleGetReturn), jwtMiddleware))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 

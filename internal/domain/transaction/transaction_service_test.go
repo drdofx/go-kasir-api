@@ -54,6 +54,11 @@ func (m *mockTransactionRepo) InsertDetails(tx *sql.Tx, transactionID int, items
 	return args.Error(0)
 }
 
+func (m *mockTransactionRepo) ExistsByID(id int) (bool, error) {
+	args := m.Called(id)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockTransactionRepo) InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error {
 	args := m.Called(tx, transactionID, paymentTypeID, amount)
 	return args.Error(0)

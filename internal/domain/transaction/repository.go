@@ -42,6 +42,7 @@ type TransactionRepository interface {
 	InsertTransaction(tx *sql.Tx, total int, customerID *int) (int, error)
 	InsertDetails(tx *sql.Tx, transactionID int, items []CheckoutItem, products []LockedProduct) error
 	InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error
+	ExistsByID(id int) (bool, error)
 }
 
 func NewTransactionRepository(db *sql.DB) TransactionRepository {
@@ -98,6 +99,12 @@ func (r *transactionRepository) FindByID(id int) (*Transaction, error) {
 	}
 	t.Details = details
 	return t, nil
+}
+
+func (r *transactionRepository) ExistsByID(id int) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM transactions WHERE id = $1)", id).Scan(&exists)
+	return exists, err
 }
 
 func (r *transactionRepository) getDetails(transactionID int) ([]DetailItem, error) {
