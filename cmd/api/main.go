@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"go-kasir-api/internal/domain/auth"
 	"go-kasir-api/internal/domain/branch"
 	"go-kasir-api/internal/domain/category"
@@ -208,31 +210,54 @@ func handlerRoot(w http.ResponseWriter, r *http.Request) {
 }
 
 func seedDefaultOrg(db *sql.DB) {
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM organizations").Scan(&count)
-	if count > 0 {
-		return
-	}
 	var orgID int
-	err := db.QueryRow("INSERT INTO organizations (name, slug) VALUES ('Default Organization', 'default') RETURNING id").Scan(&orgID)
-	if err != nil {
-		log.Printf("seed org: %v", err)
-		return
+	err := db.QueryRow("SELECT id FROM organizations ORDER BY id LIMIT 1").Scan(&orgID)
+	if err == sql.ErrNoRows {
+		err = db.QueryRow("INSERT INTO organizations (name, slug) VALUES ('Default Organization', 'default') RETURNING id").Scan(&orgID)
+		if err != nil {
+			log.Printf("seed org: %v", err)
+			return
+		}
+		log.Printf("created default org (id=%d)", orgID)
 	}
 	var branchID int
-	err = db.QueryRow("INSERT INTO branches (organization_id, name, code) VALUES ($1, 'Main Branch', 'main') RETURNING id", orgID).Scan(&branchID)
-	if err != nil {
-		log.Printf("seed branch: %v", err)
-		return
+	err = db.QueryRow("SELECT id FROM branches ORDER BY id LIMIT 1").Scan(&branchID)
+	if err == sql.ErrNoRows {
+		err = db.QueryRow("INSERT INTO branches (organization_id, name, code) VALUES ($1, 'Main Branch', 'main') RETURNING id", orgID).Scan(&branchID)
+		if err != nil {
+			log.Printf("seed branch: %v", err)
+			return
+		}
+		log.Printf("created default branch (id=%d) for org %d", branchID, orgID)
 	}
-	db.Exec("UPDATE users SET organization_id = $1 WHERE organization_id IS NULL", orgID)
-	db.Exec("UPDATE categories SET organization_id = $1 WHERE organization_id IS NULL", orgID)
-	db.Exec("UPDATE products SET organization_id = $1 WHERE organization_id IS NULL", orgID)
-	db.Exec("UPDATE transactions SET organization_id = $1, branch_id = $2 WHERE organization_id IS NULL", orgID, branchID)
-	db.Exec("UPDATE customers SET organization_id = $1 WHERE organization_id IS NULL", orgID)
-	db.Exec("UPDATE suppliers SET organization_id = $1 WHERE organization_id IS NULL", orgID)
-	db.Exec("UPDATE purchase_orders SET organization_id = $1, branch_id = $2 WHERE organization_id IS NULL", orgID, branchID)
-	db.Exec("UPDATE returns SET organization_id = $1 WHERE organization_id IS NULL", orgID)
+	var userCount int
+	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+	if userCount == 0 {
+		adminPass := viper.GetString("ADMIN_PASSWORD")
+		if adminPass == "" {
+			adminPass = "kasir123"
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(adminPass), bcrypt.DefaultCost)
+		if err != nil {
+			log.Printf("seed user hash: %v", err)
+			return
+		}
+		_, err = db.Exec("INSERT INTO users (username, password_hash, name, role, organization_id, branch_id) VALUES ($1, $2, $3, $4, $5, $6)",
+			"kasir", string(hash), "Kasir Utama", "admin", orgID, branchID)
+		if err != nil {
+			log.Printf("seed user: %v", err)
+			return
+		}
+		log.Printf("seeded admin user: kasir / %s (org=%d, branch=%d)", adminPass, orgID, branchID)
+	} else {
+		db.Exec("UPDATE users SET organization_id = COALESCE(organization_id, $1), branch_id = COALESCE(branch_id, $2) WHERE organization_id IS NULL OR organization_id = 0", orgID, branchID)
+	}
+	db.Exec("UPDATE categories SET organization_id = $1 WHERE organization_id IS NULL OR organization_id = 0", orgID)
+	db.Exec("UPDATE products SET organization_id = $1 WHERE organization_id IS NULL OR organization_id = 0", orgID)
+	db.Exec("UPDATE transactions SET organization_id = COALESCE(organization_id, $1), branch_id = COALESCE(branch_id, $2) WHERE organization_id IS NULL OR organization_id = 0", orgID, branchID)
+	db.Exec("UPDATE customers SET organization_id = $1 WHERE organization_id IS NULL OR organization_id = 0", orgID)
+	db.Exec("UPDATE suppliers SET organization_id = $1 WHERE organization_id IS NULL OR organization_id = 0", orgID)
+	db.Exec("UPDATE purchase_orders SET organization_id = COALESCE(organization_id, $1), branch_id = COALESCE(branch_id, $2) WHERE organization_id IS NULL OR organization_id = 0", orgID, branchID)
+	db.Exec("UPDATE returns SET organization_id = $1 WHERE organization_id IS NULL OR organization_id = 0", orgID)
 	db.Exec(`INSERT INTO product_stocks (product_id, branch_id, stock) SELECT id, $1, 0 FROM products WHERE id NOT IN (SELECT product_id FROM product_stocks WHERE branch_id = $1)`, branchID)
-	log.Printf("seeded default org (id=%d) and branch (id=%d)", orgID, branchID)
 }
