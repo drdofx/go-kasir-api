@@ -3,15 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -28,58 +23,38 @@ import (
 	"go-kasir-api/internal/domain/returns"
 	"go-kasir-api/internal/domain/supplier"
 	"go-kasir-api/internal/domain/transaction"
+	"go-kasir-api/internal/pkg/config"
 	"go-kasir-api/internal/pkg/database"
 	"go-kasir-api/internal/pkg/helpers"
 	"go-kasir-api/internal/pkg/middleware"
 
 	"github.com/rs/zerolog"
-	"github.com/spf13/viper"
 )
 
 func main() {
-	viper.SetDefault("PORT", "8080")
-	viper.SetDefault("CORS_ALLOWED_ORIGIN", "http://localhost:8080")
-	viper.SetDefault("LOG_LEVEL", "info")
-	viper.SetDefault("MIGRATIONS_PATH", "migrations")
-	viper.SetDefault("APP_ENV", "development")
-	viper.SetDefault("AUTO_MIGRATE", true)
-	viper.SetDefault("SERVER_READ_TIMEOUT", "10s")
-	viper.SetDefault("SERVER_READ_HEADER_TIMEOUT", "5s")
-	viper.SetDefault("SERVER_WRITE_TIMEOUT", "30s")
-	viper.SetDefault("SERVER_IDLE_TIMEOUT", "120s")
-	viper.SetDefault("SERVER_SHUTDOWN_TIMEOUT", "10s")
-	viper.SetDefault("MAX_REQUEST_BODY_BYTES", 1048576)
-	viper.AutomaticEnv()
-	viper.SetConfigFile(".env")
-	if err := viper.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if !os.IsNotExist(err) && !errors.As(err, &notFound) {
-			log.Fatalf("failed to read config: %v", err)
-		}
-	}
-
-	if err := validateConfig(); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
 
-	logLevel, err := zerolog.ParseLevel(viper.GetString("LOG_LEVEL"))
+	logLevel, err := zerolog.ParseLevel(cfg.LogLevel)
 	if err != nil {
 		logLevel = zerolog.InfoLevel
 	}
 	zerolog.SetGlobalLevel(logLevel)
 
-	db, err := database.InitDB(viper.GetString("DB_CONN"))
+	db, err := database.InitDB(cfg.DBConn)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 	defer db.Close()
 
-	if viper.GetBool("AUTO_MIGRATE") {
-		if err := database.RunMigrations(db, viper.GetString("MIGRATIONS_PATH")); err != nil {
+	if cfg.AutoMigrate {
+		if err := database.RunMigrations(db, cfg.MigrationsPath); err != nil {
 			log.Fatalf("failed to run migrations: %v", err)
 		}
 	}
-	seedDefaultOrg(db)
+	seedDefaultOrg(db, cfg.AdminPassword)
 
 	userRepo := auth.NewUserRepository(db)
 	productRepo := product.NewProductRepository(db)
@@ -97,7 +72,7 @@ func main() {
 	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
 	branchRepoForAuth := &authBranchRepoWrapper{branchRepo}
 
-	authService := auth.NewAuthService(userRepo, branchRepoForAuth, viper.GetString("JWT_SECRET"))
+	authService := auth.NewAuthService(userRepo, branchRepoForAuth, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	categoryService := category.NewCategoryService(categoryRepo)
 	productService := product.NewProductService(productRepo, catRepoForProduct)
 	customerService := customer.NewCustomerService(customerRepo)
@@ -124,7 +99,7 @@ func main() {
 	transactionHandler := transaction.NewTransactionHandler(transactionService)
 	reportHandler := report.NewReportHandler(reportService)
 
-	corsMiddleware := middleware.CORS(viper.GetString("CORS_ALLOWED_ORIGIN"))
+	corsMiddleware := middleware.CORS(cfg.CORSAllowedOrigin)
 	jwtMiddleware := middleware.JWTAuth(authService)
 	adminOnly := middleware.RequireRole("admin")
 
@@ -136,6 +111,7 @@ func main() {
 
 	// Old API routes (backward compatibility)
 	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
+	mux.HandleFunc("/api/auth/refresh", authHandler.HandleRefresh)
 	mux.Handle("/api/auth/logout", middleware.Chain(http.HandlerFunc(authHandler.HandleLogout), jwtMiddleware))
 	mux.Handle("/api/auth/me", middleware.Chain(http.HandlerFunc(authHandler.HandleMe), jwtMiddleware))
 	mux.Handle("/api/auth/change-password", middleware.Chain(http.HandlerFunc(authHandler.HandleChangePassword), jwtMiddleware))
@@ -150,6 +126,7 @@ func main() {
 
 	// V1 API routes
 	mux.HandleFunc("/api/v1/auth/login", authHandler.HandleLogin)
+	mux.HandleFunc("/api/v1/auth/refresh", authHandler.HandleRefresh)
 	mux.Handle("/api/v1/auth/logout", middleware.Chain(http.HandlerFunc(authHandler.HandleLogout), jwtMiddleware))
 	mux.Handle("/api/v1/auth/me", middleware.Chain(http.HandlerFunc(authHandler.HandleMe), jwtMiddleware))
 	mux.Handle("/api/v1/auth/change-password", middleware.Chain(http.HandlerFunc(authHandler.HandleChangePassword), jwtMiddleware))
@@ -192,26 +169,26 @@ func main() {
 
 	wrapped := middleware.Chain(mux,
 		middleware.RequestID(),
-		middleware.BodyLimit(viper.GetInt64("MAX_REQUEST_BODY_BYTES")),
+		middleware.BodyLimit(cfg.MaxRequestBodyBytes),
 		corsMiddleware,
 		middleware.SecurityHeaders(),
-		middleware.Logger(viper.GetString("LOG_LEVEL")),
+		middleware.Logger(cfg.LogLevel),
 	)
 
 	server := &http.Server{
-		Addr:              ":" + viper.GetString("PORT"),
+		Addr:              ":" + cfg.Port,
 		Handler:           wrapped,
-		ReadTimeout:       mustDuration("SERVER_READ_TIMEOUT"),
-		ReadHeaderTimeout: mustDuration("SERVER_READ_HEADER_TIMEOUT"),
-		WriteTimeout:      mustDuration("SERVER_WRITE_TIMEOUT"),
-		IdleTimeout:       mustDuration("SERVER_IDLE_TIMEOUT"),
+		ReadTimeout:       cfg.ServerReadTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		WriteTimeout:      cfg.ServerWriteTimeout,
+		IdleTimeout:       cfg.ServerIdleTimeout,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	go func() {
-		log.Printf("server starting on port %s", viper.GetString("PORT"))
+		log.Printf("server starting on port %s", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}
@@ -220,7 +197,7 @@ func main() {
 	<-ctx.Done()
 	log.Println("shutting down server...")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), mustDuration("SERVER_SHUTDOWN_TIMEOUT"))
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ServerShutdown)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown failed: %v", err)
@@ -228,55 +205,6 @@ func main() {
 			log.Printf("server close failed: %v", err)
 		}
 	}
-}
-
-func validateConfig() error {
-	if strings.TrimSpace(viper.GetString("DB_CONN")) == "" {
-		return fmt.Errorf("DB_CONN is required")
-	}
-
-	jwtSecret := strings.TrimSpace(viper.GetString("JWT_SECRET"))
-	if jwtSecret == "" {
-		return fmt.Errorf("JWT_SECRET is required")
-	}
-
-	appEnv := strings.ToLower(strings.TrimSpace(viper.GetString("APP_ENV")))
-	if appEnv == "production" {
-		if len(jwtSecret) < 32 {
-			return fmt.Errorf("JWT_SECRET must be at least 32 characters in production")
-		}
-		if jwtSecret == "change-this-secret-in-production" {
-			return fmt.Errorf("JWT_SECRET must not use the default development value in production")
-		}
-		if strings.TrimSpace(viper.GetString("ADMIN_PASSWORD")) == "" {
-			return fmt.Errorf("ADMIN_PASSWORD is required in production")
-		}
-	}
-	if viper.GetInt64("MAX_REQUEST_BODY_BYTES") < 0 {
-		return fmt.Errorf("MAX_REQUEST_BODY_BYTES must be greater than or equal to 0")
-	}
-
-	for _, key := range []string{
-		"SERVER_READ_TIMEOUT",
-		"SERVER_READ_HEADER_TIMEOUT",
-		"SERVER_WRITE_TIMEOUT",
-		"SERVER_IDLE_TIMEOUT",
-		"SERVER_SHUTDOWN_TIMEOUT",
-	} {
-		if _, err := time.ParseDuration(viper.GetString(key)); err != nil {
-			return fmt.Errorf("%s must be a valid duration: %w", key, err)
-		}
-	}
-
-	return nil
-}
-
-func mustDuration(key string) time.Duration {
-	d, err := time.ParseDuration(viper.GetString(key))
-	if err != nil {
-		log.Fatalf("invalid duration for %s: %v", key, err)
-	}
-	return d
 }
 
 type categoryRepoWrapper struct {
@@ -317,7 +245,7 @@ func handlerRoot(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/health", http.StatusFound)
 }
 
-func seedDefaultOrg(db *sql.DB) {
+func seedDefaultOrg(db *sql.DB, configuredAdminPass string) {
 	var orgID int
 	err := db.QueryRow("SELECT id FROM organizations ORDER BY id LIMIT 1").Scan(&orgID)
 	if err == sql.ErrNoRows {
@@ -341,7 +269,7 @@ func seedDefaultOrg(db *sql.DB) {
 	var userCount int
 	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
 	if userCount == 0 {
-		adminPass := viper.GetString("ADMIN_PASSWORD")
+		adminPass := configuredAdminPass
 		if adminPass == "" {
 			adminPass = "kasir123"
 		}

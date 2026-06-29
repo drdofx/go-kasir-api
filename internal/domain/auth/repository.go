@@ -30,6 +30,9 @@ type UserRepository interface {
 	Create(u *User) error
 	UpdatePassword(userID int, newHash string) error
 	UpdateRole(userID int, role string, permissions []string) error
+	CreateRefreshToken(userID int, tokenHash string, expiresAt time.Time) error
+	FindUserByRefreshToken(tokenHash string) (*User, error)
+	RevokeRefreshToken(tokenHash string) error
 }
 
 func NewUserRepository(db *sql.DB) UserRepository {
@@ -86,5 +89,29 @@ func (r *userRepository) UpdatePassword(userID int, newHash string) error {
 
 func (r *userRepository) UpdateRole(userID int, role string, permissions []string) error {
 	_, err := r.db.Exec("UPDATE users SET role = $1, permissions = $2 WHERE id = $3", role, pq.Array(permissions), userID)
+	return err
+}
+
+func (r *userRepository) CreateRefreshToken(userID int, tokenHash string, expiresAt time.Time) error {
+	_, err := r.db.Exec("INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)", userID, tokenHash, expiresAt)
+	return err
+}
+
+func (r *userRepository) FindUserByRefreshToken(tokenHash string) (*User, error) {
+	row := r.db.QueryRow(`SELECT u.id, u.username, u.password_hash, u.name, u.role,
+			COALESCE(u.permissions, '{}'), COALESCE(u.organization_id, 0), u.branch_id, u.created_at
+		FROM refresh_tokens rt
+		JOIN users u ON u.id = rt.user_id
+		WHERE rt.token_hash = $1 AND rt.revoked_at IS NULL AND rt.expires_at > NOW()`, tokenHash)
+	u := &User{}
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Name, &u.Role, (*pq.StringArray)(&u.Permissions), &u.OrganizationID, &u.BranchID, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return u, err
+}
+
+func (r *userRepository) RevokeRefreshToken(tokenHash string) error {
+	_, err := r.db.Exec("UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL", tokenHash)
 	return err
 }

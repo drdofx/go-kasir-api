@@ -64,6 +64,13 @@ func (h *BranchHandler) HandleBranches(w http.ResponseWriter, r *http.Request) {
 		if bs == nil {
 			bs = []Branch{}
 		}
+		pagination, err := helpers.ParsePagination(r)
+		if err != nil {
+			helpers.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		helpers.WritePaginationHeaders(w, pagination, len(bs))
+		bs = helpers.Paginate(bs, pagination)
 		helpers.WriteJSON(w, http.StatusOK, toResponses(bs))
 	case http.MethodPost:
 		var req branchRequest

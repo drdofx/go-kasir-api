@@ -88,6 +88,13 @@ func (h *CategoryHandler) list(w http.ResponseWriter, r *http.Request) {
 	if categories == nil {
 		categories = []Category{}
 	}
+	pagination, err := helpers.ParsePagination(r)
+	if err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	helpers.WritePaginationHeaders(w, pagination, len(categories))
+	categories = helpers.Paginate(categories, pagination)
 	helpers.WriteJSON(w, http.StatusOK, toResponses(categories))
 }
 

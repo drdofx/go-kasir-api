@@ -68,6 +68,13 @@ func (h *SupplierHandler) HandleSuppliers(w http.ResponseWriter, r *http.Request
 		if ss == nil {
 			ss = []Supplier{}
 		}
+		pagination, err := helpers.ParsePagination(r)
+		if err != nil {
+			helpers.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		helpers.WritePaginationHeaders(w, pagination, len(ss))
+		ss = helpers.Paginate(ss, pagination)
 		helpers.WriteJSON(w, http.StatusOK, toResponses(ss))
 	case http.MethodPost:
 		var req supplierRequest

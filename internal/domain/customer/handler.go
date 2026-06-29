@@ -121,6 +121,13 @@ func (h *CustomerHandler) list(w http.ResponseWriter, r *http.Request) {
 	if customers == nil {
 		customers = []Customer{}
 	}
+	pagination, err := helpers.ParsePagination(r)
+	if err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	helpers.WritePaginationHeaders(w, pagination, len(customers))
+	customers = helpers.Paginate(customers, pagination)
 	helpers.WriteJSON(w, http.StatusOK, toCustomerResponses(customers))
 }
 

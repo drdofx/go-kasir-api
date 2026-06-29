@@ -52,6 +52,8 @@ Common:
 - `SERVER_IDLE_TIMEOUT`: default `120s`.
 - `SERVER_SHUTDOWN_TIMEOUT`: default `10s`.
 - `MAX_REQUEST_BODY_BYTES`: global request body limit, default `1048576`.
+- `ACCESS_TOKEN_TTL`: JWT access token lifetime, default `15m`.
+- `REFRESH_TOKEN_TTL`: refresh token lifetime, default `720h`.
 
 ## Production Notes
 
@@ -75,6 +77,7 @@ go test ./...
 The primary endpoints are available under `/api/v1`, including:
 
 - `/api/v1/auth/login`
+- `/api/v1/auth/refresh`
 - `/api/v1/auth/me`
 - `/api/v1/products`
 - `/api/v1/categories`
@@ -91,3 +94,11 @@ The primary endpoints are available under `/api/v1`, including:
 - `/api/v1/report/today`
 
 Legacy `/api/...` endpoints are still available for selected resources.
+
+## Pagination
+
+List endpoints accept `page` and `per_page` query parameters. Pagination metadata is returned in response headers:
+
+- `X-Page`
+- `X-Per-Page`
+- `X-Total-Count`

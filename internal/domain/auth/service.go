@@ -1,6 +1,10 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -19,9 +23,11 @@ var (
 )
 
 type AuthService struct {
-	userRepo   UserRepository
-	branchRepo BranchRepository
-	jwtSecret  string
+	userRepo        UserRepository
+	branchRepo      BranchRepository
+	jwtSecret       string
+	accessTokenTTL  time.Duration
+	refreshTokenTTL time.Duration
 }
 
 type BranchRepository interface {
@@ -33,38 +39,60 @@ type Branch struct {
 	OrganizationID int
 }
 
-func NewAuthService(userRepo UserRepository, branchRepo BranchRepository, jwtSecret string) *AuthService {
-	return &AuthService{userRepo: userRepo, branchRepo: branchRepo, jwtSecret: jwtSecret}
+func NewAuthService(userRepo UserRepository, branchRepo BranchRepository, jwtSecret string, accessTokenTTL, refreshTokenTTL time.Duration) *AuthService {
+	return &AuthService{
+		userRepo:        userRepo,
+		branchRepo:      branchRepo,
+		jwtSecret:       jwtSecret,
+		accessTokenTTL:  accessTokenTTL,
+		refreshTokenTTL: refreshTokenTTL,
+	}
 }
 
-func (s *AuthService) Login(username, password string) (string, *User, error) {
+type TokenPair struct {
+	AccessToken  string
+	RefreshToken string
+}
+
+func (s *AuthService) Login(username, password string) (TokenPair, *User, error) {
 	user, err := s.userRepo.FindByUsername(username)
 	if err != nil {
-		return "", nil, err
+		return TokenPair{}, nil, err
 	}
 	if user == nil {
-		return "", nil, errors.New("invalid credentials")
+		return TokenPair{}, nil, errors.New("invalid credentials")
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", nil, errors.New("invalid credentials")
+		return TokenPair{}, nil, errors.New("invalid credentials")
 	}
+	accessToken, err := s.signAccessToken(user)
+	if err != nil {
+		return TokenPair{}, nil, err
+	}
+	refreshToken, err := newRefreshToken()
+	if err != nil {
+		return TokenPair{}, nil, err
+	}
+	if err := s.userRepo.CreateRefreshToken(user.ID, hashToken(refreshToken), time.Now().Add(s.refreshTokenTTL)); err != nil {
+		return TokenPair{}, nil, err
+	}
+	return TokenPair{AccessToken: accessToken, RefreshToken: refreshToken}, user, nil
+}
+
+func (s *AuthService) signAccessToken(user *User) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id":     user.ID,
 		"username":    user.Username,
 		"role":        user.Role,
 		"permissions": user.Permissions,
 		"org_id":      user.OrganizationID,
-		"exp":         time.Now().Add(24 * time.Hour).Unix(),
+		"exp":         time.Now().Add(s.accessTokenTTL).Unix(),
 	}
 	if user.BranchID != nil {
 		claims["branch_id"] = *user.BranchID
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, err := token.SignedString([]byte(s.jwtSecret))
-	if err != nil {
-		return "", nil, err
-	}
-	return tokenStr, user, nil
+	return token.SignedString([]byte(s.jwtSecret))
 }
 
 func (s *AuthService) ValidateToken(tokenStr string) (int, string, string, []string, int, *int, error) {
@@ -135,10 +163,28 @@ func (s *AuthService) SwitchBranch(userID, newBranchID int) (string, error) {
 		"permissions": user.Permissions,
 		"org_id":      user.OrganizationID,
 		"branch_id":   newBranchID,
-		"exp":         time.Now().Add(24 * time.Hour).Unix(),
+		"exp":         time.Now().Add(s.accessTokenTTL).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtSecret))
+}
+
+func (s *AuthService) Refresh(refreshToken string) (string, error) {
+	user, err := s.userRepo.FindUserByRefreshToken(hashToken(refreshToken))
+	if err != nil {
+		return "", err
+	}
+	if user == nil {
+		return "", ErrInvalidToken
+	}
+	return s.signAccessToken(user)
+}
+
+func (s *AuthService) Logout(refreshToken string) error {
+	if refreshToken == "" {
+		return nil
+	}
+	return s.userRepo.RevokeRefreshToken(hashToken(refreshToken))
 }
 
 func (s *AuthService) CreateUser(username, password, name, role string, organizationID int, branchID *int) (*User, error) {
@@ -193,4 +239,17 @@ func parsePermissionsClaim(value interface{}) []string {
 		}
 	}
 	return permissions
+}
+
+func newRefreshToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

@@ -30,6 +30,8 @@ services:
       AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-kasir123}
       JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-720h}
     depends_on:
       db:
         condition: service_healthy

@@ -24,9 +24,11 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Message string   `json:"message"`
-	Token   string   `json:"token"`
-	User    userJSON `json:"user"`
+	Message      string   `json:"message"`
+	Token        string   `json:"token"` // Backward-compatible alias for access_token.
+	AccessToken  string   `json:"access_token"`
+	RefreshToken string   `json:"refresh_token"`
+	User         userJSON `json:"user"`
 }
 
 type userJSON struct {
@@ -45,21 +47,25 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
+type refreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
 type messageResponse struct {
 	Message string `json:"message"`
 }
 
 func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := helpers.DecodeJSON(r, &req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Username == "" || req.Password == "" {
-		helpers.WriteError(w, http.StatusBadRequest, "username and password are required")
+	if err := helpers.RequireNonEmpty(map[string]string{"username": req.Username, "password": req.Password}); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	token, user, err := h.service.Login(req.Username, req.Password)
+	tokens, user, err := h.service.Login(req.Username, req.Password)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
 			helpers.WriteError(w, http.StatusUnauthorized, "invalid credentials")
@@ -69,8 +75,10 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, loginResponse{
-		Message: "login successful",
-		Token:   token,
+		Message:      "login successful",
+		Token:        tokens.AccessToken,
+		AccessToken:  tokens.AccessToken,
+		RefreshToken: tokens.RefreshToken,
 		User: userJSON{
 			ID:          user.ID,
 			Username:    user.Username,
@@ -85,7 +93,37 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	var req refreshTokenRequest
+	if r.Body != nil {
+		_ = helpers.DecodeJSON(r, &req)
+	}
+	if err := h.service.Logout(req.RefreshToken); err != nil {
+		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	helpers.WriteJSON(w, http.StatusOK, messageResponse{Message: "logout successful"})
+}
+
+func (h *AuthHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
+	var req refreshTokenRequest
+	if err := helpers.DecodeJSON(r, &req); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := helpers.RequireNonEmpty(map[string]string{"refresh_token": req.RefreshToken}); err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	accessToken, err := h.service.Refresh(req.RefreshToken)
+	if err != nil {
+		if errors.Is(err, ErrInvalidToken) {
+			helpers.WriteError(w, http.StatusUnauthorized, "invalid refresh token")
+			return
+		}
+		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	helpers.WriteJSON(w, http.StatusOK, map[string]string{"access_token": accessToken, "token": accessToken})
 }
 
 func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +152,13 @@ func (h *AuthHandler) HandleUsers(w http.ResponseWriter, r *http.Request) {
 			helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
+		pagination, err := helpers.ParsePagination(r)
+		if err != nil {
+			helpers.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		helpers.WritePaginationHeaders(w, pagination, len(users))
+		users = helpers.Paginate(users, pagination)
 		res := make([]userJSON, len(users))
 		for i, u := range users {
 			res[i] = userJSON{

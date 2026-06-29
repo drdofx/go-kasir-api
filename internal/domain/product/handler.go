@@ -105,6 +105,13 @@ func (h *ProductHandler) list(w http.ResponseWriter, r *http.Request) {
 	if products == nil {
 		products = []Product{}
 	}
+	pagination, err := helpers.ParsePagination(r)
+	if err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	helpers.WritePaginationHeaders(w, pagination, len(products))
+	products = helpers.Paginate(products, pagination)
 	helpers.WriteJSON(w, http.StatusOK, toResponses(products))
 }
 

@@ -22,6 +22,10 @@ Login:
 TOKEN=$(curl -s -X POST "$BASE/api/v1/auth/login" \
   -H "Content-Type: application/json" \
   -d "{\"username\":\"kasir\",\"password\":\"$ADMIN_PASSWORD\"}" | jq -r '.token')
+
+REFRESH_TOKEN=$(curl -s -X POST "$BASE/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"kasir\",\"password\":\"$ADMIN_PASSWORD\"}" | jq -r '.refresh_token')
 ```
 
 Get current user:
@@ -51,12 +55,29 @@ curl -s -X POST "$BASE/api/v1/auth/switch-branch" \
 
 Use the returned token for branch-scoped operations.
 
+Refresh access token:
+
+```bash
+TOKEN=$(curl -s -X POST "$BASE/api/v1/auth/refresh" \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}" | jq -r '.access_token')
+```
+
+Logout and revoke refresh token:
+
+```bash
+curl -s -X POST "$BASE/api/v1/auth/logout" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}" | jq .
+```
+
 ## Admin Operations
 
 List users:
 
 ```bash
-curl -s "$BASE/api/v1/users" \
+curl -s "$BASE/api/v1/users?page=1&per_page=20" \
   -H "Authorization: Bearer $TOKEN" | jq .
 ```
 

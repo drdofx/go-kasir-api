@@ -117,6 +117,13 @@ func (h *TransactionHandler) HandleTransactions(w http.ResponseWriter, r *http.R
 	if txns == nil {
 		txns = []Transaction{}
 	}
+	pagination, err := helpers.ParsePagination(r)
+	if err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	helpers.WritePaginationHeaders(w, pagination, len(txns))
+	txns = helpers.Paginate(txns, pagination)
 	helpers.WriteJSON(w, http.StatusOK, toTransactionResponses(txns))
 }
 

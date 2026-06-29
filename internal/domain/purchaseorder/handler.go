@@ -85,6 +85,13 @@ func (h *POHandler) HandlePOs(w http.ResponseWriter, r *http.Request) {
 		if pos == nil {
 			pos = []PurchaseOrder{}
 		}
+		pagination, err := helpers.ParsePagination(r)
+		if err != nil {
+			helpers.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		helpers.WritePaginationHeaders(w, pagination, len(pos))
+		pos = helpers.Paginate(pos, pagination)
 		helpers.WriteJSON(w, http.StatusOK, toPOResponses(pos))
 	case http.MethodPost:
 		if user.BranchID == nil {

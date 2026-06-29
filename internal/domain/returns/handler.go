@@ -125,6 +125,13 @@ func (h *ReturnHandler) HandleListReturns(w http.ResponseWriter, r *http.Request
 	if returns == nil {
 		returns = []Return{}
 	}
+	pagination, err := helpers.ParsePagination(r)
+	if err != nil {
+		helpers.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	helpers.WritePaginationHeaders(w, pagination, len(returns))
+	returns = helpers.Paginate(returns, pagination)
 	helpers.WriteJSON(w, http.StatusOK, toReturnResponses(returns))
 }
 
