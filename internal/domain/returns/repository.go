@@ -8,21 +8,22 @@ import (
 )
 
 type Return struct {
-	ID            int
-	TransactionID int
-	TotalRefund   int
-	Reason        string
-	CreatedAt     time.Time
-	Items         []ReturnItem
+	ID             int
+	TransactionID  int
+	TotalRefund    int
+	Reason         string
+	OrganizationID int
+	CreatedAt      time.Time
+	Items          []ReturnItem
 }
 
 type ReturnItem struct {
-	ID        int
-	ReturnID  int
-	ProductID int
+	ID          int
+	ReturnID    int
+	ProductID   int
 	ProductName string
-	Quantity  int
-	Subtotal  int
+	Quantity    int
+	Subtotal    int
 }
 
 type returnRepository struct {
@@ -32,10 +33,15 @@ type returnRepository struct {
 type ReturnRepository interface {
 	BeginTx() (*sql.Tx, error)
 	FindAll() ([]Return, error)
+	FindAllForOrg(orgID int) ([]Return, error)
 	FindByID(id int) (*Return, error)
+	FindByIDForOrg(orgID, id int) (*Return, error)
 	FindTransactionDetails(tx *sql.Tx, transactionID int) ([]LockedProduct, error)
+	FindTransactionDetailsForOrg(tx *sql.Tx, orgID, transactionID int) ([]LockedProduct, error)
 	UpdateStock(tx *sql.Tx, productID, quantity int) error
+	UpdateBranchStock(tx *sql.Tx, branchID, productID, quantity int) error
 	InsertReturn(tx *sql.Tx, transactionID, totalRefund int, reason string) (int, error)
+	InsertReturnForOrg(tx *sql.Tx, orgID, transactionID, totalRefund int, reason string) (int, error)
 	InsertReturnItems(tx *sql.Tx, returnID int, items []ReturnItemRequest, products []LockedProduct) error
 }
 
@@ -85,10 +91,54 @@ func (r *returnRepository) FindAll() ([]Return, error) {
 	return returns, nil
 }
 
+func (r *returnRepository) FindAllForOrg(orgID int) ([]Return, error) {
+	rows, err := r.db.Query("SELECT id, transaction_id, total_refund, reason, COALESCE(organization_id, 0), created_at FROM returns WHERE organization_id = $1 ORDER BY created_at DESC", orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var returns []Return
+	for rows.Next() {
+		var ret Return
+		if err := rows.Scan(&ret.ID, &ret.TransactionID, &ret.TotalRefund, &ret.Reason, &ret.OrganizationID, &ret.CreatedAt); err != nil {
+			return nil, err
+		}
+		returns = append(returns, ret)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range returns {
+		items, err := r.getItems(returns[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		returns[i].Items = items
+	}
+	return returns, nil
+}
+
 func (r *returnRepository) FindByID(id int) (*Return, error) {
 	row := r.db.QueryRow("SELECT id, transaction_id, total_refund, reason, created_at FROM returns WHERE id = $1", id)
 	ret := &Return{}
 	if err := row.Scan(&ret.ID, &ret.TransactionID, &ret.TotalRefund, &ret.Reason, &ret.CreatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	items, err := r.getItems(ret.ID)
+	if err != nil {
+		return nil, err
+	}
+	ret.Items = items
+	return ret, nil
+}
+
+func (r *returnRepository) FindByIDForOrg(orgID, id int) (*Return, error) {
+	row := r.db.QueryRow("SELECT id, transaction_id, total_refund, reason, COALESCE(organization_id, 0), created_at FROM returns WHERE organization_id = $1 AND id = $2", orgID, id)
+	ret := &Return{}
+	if err := row.Scan(&ret.ID, &ret.TransactionID, &ret.TotalRefund, &ret.Reason, &ret.OrganizationID, &ret.CreatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -140,8 +190,37 @@ func (r *returnRepository) FindTransactionDetails(tx *sql.Tx, transactionID int)
 	return products, rows.Err()
 }
 
+func (r *returnRepository) FindTransactionDetailsForOrg(tx *sql.Tx, orgID, transactionID int) ([]LockedProduct, error) {
+	rows, err := tx.Query(`SELECT p.id, p.name, td.subtotal / td.quantity
+		FROM transaction_details td
+		JOIN products p ON td.product_id = p.id
+		JOIN transactions t ON t.id = td.transaction_id
+		WHERE t.organization_id = $1 AND td.transaction_id = $2`, orgID, transactionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var products []LockedProduct
+	for rows.Next() {
+		var p LockedProduct
+		if err := rows.Scan(&p.ID, &p.Name, &p.Price); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
+}
+
 func (r *returnRepository) UpdateStock(tx *sql.Tx, productID, quantity int) error {
 	_, err := tx.Exec("UPDATE products SET stock = stock + $1 WHERE id = $2", quantity, productID)
+	return err
+}
+
+func (r *returnRepository) UpdateBranchStock(tx *sql.Tx, branchID, productID, quantity int) error {
+	_, err := tx.Exec(`INSERT INTO product_stocks (product_id, branch_id, stock)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (product_id, branch_id) DO UPDATE SET stock = product_stocks.stock + EXCLUDED.stock`,
+		productID, branchID, quantity)
 	return err
 }
 
@@ -149,6 +228,13 @@ func (r *returnRepository) InsertReturn(tx *sql.Tx, transactionID, totalRefund i
 	var id int
 	err := tx.QueryRow("INSERT INTO returns (transaction_id, total_refund, reason) VALUES ($1, $2, $3) RETURNING id",
 		transactionID, totalRefund, reason).Scan(&id)
+	return id, err
+}
+
+func (r *returnRepository) InsertReturnForOrg(tx *sql.Tx, orgID, transactionID, totalRefund int, reason string) (int, error) {
+	var id int
+	err := tx.QueryRow("INSERT INTO returns (organization_id, transaction_id, total_refund, reason) VALUES ($1, $2, $3, $4) RETURNING id",
+		orgID, transactionID, totalRefund, reason).Scan(&id)
 	return id, err
 }
 

@@ -22,8 +22,21 @@ func (m *mockReturnRepo) FindAll() ([]Return, error) {
 	return args.Get(0).([]Return), args.Error(1)
 }
 
+func (m *mockReturnRepo) FindAllForOrg(orgID int) ([]Return, error) {
+	args := m.Called(orgID)
+	return args.Get(0).([]Return), args.Error(1)
+}
+
 func (m *mockReturnRepo) FindByID(id int) (*Return, error) {
 	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Return), args.Error(1)
+}
+
+func (m *mockReturnRepo) FindByIDForOrg(orgID, id int) (*Return, error) {
+	args := m.Called(orgID, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -35,13 +48,28 @@ func (m *mockReturnRepo) FindTransactionDetails(tx *sql.Tx, transactionID int) (
 	return args.Get(0).([]LockedProduct), args.Error(1)
 }
 
+func (m *mockReturnRepo) FindTransactionDetailsForOrg(tx *sql.Tx, orgID, transactionID int) ([]LockedProduct, error) {
+	args := m.Called(tx, orgID, transactionID)
+	return args.Get(0).([]LockedProduct), args.Error(1)
+}
+
 func (m *mockReturnRepo) UpdateStock(tx *sql.Tx, productID, quantity int) error {
 	args := m.Called(tx, productID, quantity)
 	return args.Error(0)
 }
 
+func (m *mockReturnRepo) UpdateBranchStock(tx *sql.Tx, branchID, productID, quantity int) error {
+	args := m.Called(tx, branchID, productID, quantity)
+	return args.Error(0)
+}
+
 func (m *mockReturnRepo) InsertReturn(tx *sql.Tx, transactionID, totalRefund int, reason string) (int, error) {
 	args := m.Called(tx, transactionID, totalRefund, reason)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *mockReturnRepo) InsertReturnForOrg(tx *sql.Tx, orgID, transactionID, totalRefund int, reason string) (int, error) {
+	args := m.Called(tx, orgID, transactionID, totalRefund, reason)
 	return args.Int(0), args.Error(1)
 }
 
@@ -56,6 +84,11 @@ type mockTxRepo struct {
 
 func (m *mockTxRepo) ExistsByID(id int) (bool, error) {
 	args := m.Called(id)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockTxRepo) ExistsByIDForOrg(orgID, id int) (bool, error) {
+	args := m.Called(orgID, id)
 	return args.Bool(0), args.Error(1)
 }
 

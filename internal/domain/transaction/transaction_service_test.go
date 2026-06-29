@@ -92,6 +92,11 @@ func (m *mockTransactionRepo) ExistsByID(id int) (bool, error) {
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockTransactionRepo) ExistsByIDForOrg(orgID, id int) (bool, error) {
+	args := m.Called(orgID, id)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockTransactionRepo) InsertPayment(tx *sql.Tx, transactionID, paymentTypeID, amount int) error {
 	args := m.Called(tx, transactionID, paymentTypeID, amount)
 	return args.Error(0)

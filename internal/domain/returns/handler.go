@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type ReturnHandler struct {
@@ -17,8 +18,8 @@ func NewReturnHandler(service *ReturnService) *ReturnHandler {
 }
 
 type returnRequest struct {
-	TransactionID int                `json:"transaction_id"`
-	Reason        string             `json:"reason"`
+	TransactionID int                 `json:"transaction_id"`
+	Reason        string              `json:"reason"`
 	Items         []ReturnItemRequest `json:"items"`
 }
 
@@ -31,11 +32,11 @@ type returnItemResponse struct {
 }
 
 type returnResponse struct {
-	ID            int                 `json:"id"`
-	TransactionID int                 `json:"transaction_id"`
-	TotalRefund   int                 `json:"total_refund"`
-	Reason        string              `json:"reason"`
-	CreatedAt     string              `json:"created_at"`
+	ID            int                  `json:"id"`
+	TransactionID int                  `json:"transaction_id"`
+	TotalRefund   int                  `json:"total_refund"`
+	Reason        string               `json:"reason"`
+	CreatedAt     string               `json:"created_at"`
 	Items         []returnItemResponse `json:"items"`
 }
 
@@ -84,6 +85,15 @@ func (h *ReturnHandler) HandleReturns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReturnHandler) HandleCreateReturn(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if user.BranchID == nil {
+		helpers.WriteError(w, http.StatusBadRequest, "no active branch")
+		return
+	}
 	var req returnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -93,7 +103,7 @@ func (h *ReturnHandler) HandleCreateReturn(w http.ResponseWriter, r *http.Reques
 		helpers.WriteError(w, http.StatusBadRequest, "transaction_id is required")
 		return
 	}
-	ret, err := h.service.ProcessReturn(req.TransactionID, req.Reason, req.Items)
+	ret, err := h.service.ProcessReturnForOrg(user.OrgID, *user.BranchID, req.TransactionID, req.Reason, req.Items)
 	if err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -102,7 +112,12 @@ func (h *ReturnHandler) HandleCreateReturn(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *ReturnHandler) HandleListReturns(w http.ResponseWriter, r *http.Request) {
-	returns, err := h.service.FindAll()
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	returns, err := h.service.FindAllForOrg(user.OrgID)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -114,6 +129,11 @@ func (h *ReturnHandler) HandleListReturns(w http.ResponseWriter, r *http.Request
 }
 
 func (h *ReturnHandler) HandleGetReturn(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		helpers.WriteError(w, http.StatusBadRequest, "id is required")
@@ -124,7 +144,7 @@ func (h *ReturnHandler) HandleGetReturn(w http.ResponseWriter, r *http.Request) 
 		helpers.WriteError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	ret, err := h.service.FindByID(id)
+	ret, err := h.service.FindByIDForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
