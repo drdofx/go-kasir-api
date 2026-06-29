@@ -1,11 +1,14 @@
 package inventory
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type InventoryHandler struct {
@@ -23,7 +26,12 @@ type thresholdRequest struct {
 }
 
 func (h *InventoryHandler) HandleAlerts(w http.ResponseWriter, r *http.Request) {
-	alerts, err := h.service.GetAlerts()
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	alerts, err := h.service.GetAlertsForOrg(user.OrgID)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -35,6 +43,11 @@ func (h *InventoryHandler) HandleAlerts(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *InventoryHandler) HandleSetThreshold(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	productID, err := strconv.Atoi(idStr)
 	if err != nil || productID <= 0 {
@@ -46,12 +59,16 @@ func (h *InventoryHandler) HandleSetThreshold(w http.ResponseWriter, r *http.Req
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := h.service.SetThreshold(Threshold{
+	if err := h.service.SetThresholdForOrg(user.OrgID, Threshold{
 		ProductID: productID,
 		MinStock:  req.MinStock,
 		MaxStock:  req.MaxStock,
 		Enabled:   req.Enabled,
 	}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			helpers.WriteError(w, http.StatusNotFound, "product not found")
+			return
+		}
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
