@@ -542,7 +542,7 @@ func (m *mockCustomerRepo) GetPurchaseHistory(customerID int) ([]PurchaseRecord,
 func TestCustomerService_Create_Valid(t *testing.T) {
     repo := new(mockCustomerRepo)
     svc := NewCustomerService(repo)
-    c := &Customer{Name: "Budi"}
+    c := &Customer{Name: "John"}
     repo.On("Create", c).Return(nil)
     err := svc.Create(c)
     assert.NoError(t, err)

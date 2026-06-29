@@ -34,15 +34,28 @@ func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-func CORS(allowedOrigin string) Middleware {
-	origin := strings.TrimSpace(allowedOrigin)
-	if origin == "" {
-		origin = "http://localhost:8080"
+func BodyLimit(maxBytes int64) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if maxBytes <= 0 || r.Body == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
 	}
+}
+
+func CORS(allowedOrigin string) Middleware {
+	allowedOrigins := parseAllowedOrigins(allowedOrigin)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
+			if origin := allowedCORSOrigin(r.Header.Get("Origin"), allowedOrigins); origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Add("Vary", "Origin")
+			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -54,6 +67,35 @@ func CORS(allowedOrigin string) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func parseAllowedOrigins(allowedOrigin string) map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, origin := range strings.Split(allowedOrigin, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		allowed[origin] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		allowed["http://localhost:8080"] = struct{}{}
+	}
+	return allowed
+}
+
+func allowedCORSOrigin(requestOrigin string, allowedOrigins map[string]struct{}) string {
+	requestOrigin = strings.TrimSpace(requestOrigin)
+	if requestOrigin == "" {
+		return ""
+	}
+	if _, ok := allowedOrigins["*"]; ok {
+		return "*"
+	}
+	if _, ok := allowedOrigins[requestOrigin]; ok {
+		return requestOrigin
+	}
+	return ""
 }
 
 func Logger(level string) Middleware {

@@ -83,6 +83,11 @@ func (h *BranchHandler) HandleBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BranchHandler) HandleBranchByID(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
@@ -91,6 +96,19 @@ func (h *BranchHandler) HandleBranchByID(w http.ResponseWriter, r *http.Request)
 	}
 	switch r.Method {
 	case http.MethodPut:
+		existing, err := h.service.repo.FindByID(id)
+		if err != nil {
+			helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		if existing == nil {
+			helpers.WriteError(w, http.StatusNotFound, "branch not found")
+			return
+		}
+		if existing.OrganizationID != user.OrgID {
+			helpers.WriteError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 		var req branchRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, "invalid request body")

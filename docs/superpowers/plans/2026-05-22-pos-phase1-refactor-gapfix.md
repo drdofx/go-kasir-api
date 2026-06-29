@@ -2123,7 +2123,7 @@ func (m *mockCategoryRepo) Delete(id int) error {
 func TestCategoryService_GetAll(t *testing.T) {
     repo := new(mockCategoryRepo)
     svc := NewCategoryService(repo)
-    expected := []Category{{ID: 1, Name: "Minuman", Description: "Minuman"}}
+    expected := []Category{{ID: 1, Name: "Beverages", Description: "Beverages"}}
     repo.On("FindAll").Return(expected, nil)
     result, err := svc.FindAll()
     assert.NoError(t, err)
@@ -2260,7 +2260,7 @@ func TestTransactionService_Checkout_Success(t *testing.T) {
     repo := new(mockTransactionRepo)
     svc := NewTransactionService(repo)
     mockTx := &sql.Tx{}
-    products := []LockedProduct{{ID: 1, Name: "Kopi", Price: 10000, Stock: 50}}
+    products := []LockedProduct{{ID: 1, Name: "Coffee", Price: 10000, Stock: 50}}
     repo.On("BeginTx").Return(mockTx, nil)
     repo.On("LockProducts", mockTx, []int{1}).Return(products, nil)
     repo.On("UpdateStock", mockTx, 1, 2).Return(nil)

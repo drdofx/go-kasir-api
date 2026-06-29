@@ -1,13 +1,13 @@
 package auth
 
 import (
-    "encoding/json"
-    "errors"
-    "net/http"
-    "strconv"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
 
-    "go-kasir-api/internal/pkg/helpers"
-    "go-kasir-api/internal/pkg/middleware"
+	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type AuthHandler struct {
@@ -30,13 +30,14 @@ type loginResponse struct {
 }
 
 type userJSON struct {
-	ID        int    `json:"id"`
-	Username  string `json:"username"`
-	Name      string `json:"name"`
-	Role      string `json:"role"`
-	OrgID     int    `json:"org_id"`
-	BranchID  *int   `json:"branch_id,omitempty"`
-	CreatedAt string `json:"created_at"`
+	ID          int      `json:"id"`
+	Username    string   `json:"username"`
+	Name        string   `json:"name"`
+	Role        string   `json:"role"`
+	Permissions []string `json:"permissions"`
+	OrgID       int      `json:"org_id"`
+	BranchID    *int     `json:"branch_id,omitempty"`
+	CreatedAt   string   `json:"created_at"`
 }
 
 type changePasswordRequest struct {
@@ -71,13 +72,14 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		Message: "login successful",
 		Token:   token,
 		User: userJSON{
-			ID:        user.ID,
-			Username:  user.Username,
-			Name:      user.Name,
-			Role:      user.Role,
-			OrgID:     user.OrganizationID,
-			BranchID:  user.BranchID,
-			CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:          user.ID,
+			Username:    user.Username,
+			Name:        user.Name,
+			Role:        user.Role,
+			Permissions: user.Permissions,
+			OrgID:       user.OrganizationID,
+			BranchID:    user.BranchID,
+			CreatedAt:   user.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		},
 	})
 }
@@ -93,13 +95,14 @@ func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, userJSON{
-		ID:        user.ID,
-		Username:  user.Username,
-		Name:      user.Name,
-		Role:      user.Role,
-		OrgID:     user.OrgID,
-		BranchID:  user.BranchID,
-		CreatedAt: user.CreatedAt,
+		ID:          user.ID,
+		Username:    user.Username,
+		Name:        user.Name,
+		Role:        user.Role,
+		Permissions: user.Permissions,
+		OrgID:       user.OrgID,
+		BranchID:    user.BranchID,
+		CreatedAt:   user.CreatedAt,
 	})
 }
 
@@ -115,7 +118,7 @@ func (h *AuthHandler) HandleUsers(w http.ResponseWriter, r *http.Request) {
 		for i, u := range users {
 			res[i] = userJSON{
 				ID: u.ID, Username: u.Username, Name: u.Name,
-				Role: u.Role, OrgID: u.OrganizationID, BranchID: u.BranchID,
+				Role: u.Role, Permissions: u.Permissions, OrgID: u.OrganizationID, BranchID: u.BranchID,
 				CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			}
 		}
@@ -135,14 +138,20 @@ func (h *AuthHandler) HandleUsers(w http.ResponseWriter, r *http.Request) {
 			helpers.WriteError(w, http.StatusBadRequest, "username and password are required")
 			return
 		}
-		u, err := h.service.CreateUser(req.Username, req.Password, req.Name, req.Role)
+		user := middleware.UserFromContext(r.Context())
+		if user == nil {
+			helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		u, err := h.service.CreateUser(req.Username, req.Password, req.Name, req.Role, user.OrgID, user.BranchID)
 		if err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		helpers.WriteJSON(w, http.StatusCreated, userJSON{
 			ID: u.ID, Username: u.Username, Name: u.Name,
-			Role: u.Role, CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			Role: u.Role, Permissions: u.Permissions, OrgID: u.OrganizationID, BranchID: u.BranchID,
+			CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	default:
 		helpers.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -190,6 +199,14 @@ func (h *AuthHandler) HandleSwitchBranch(w http.ResponseWriter, r *http.Request)
 	}
 	token, err := h.service.SwitchBranch(user.ID, req.BranchID)
 	if err != nil {
+		if errors.Is(err, ErrBranchNotFound) {
+			helpers.WriteError(w, http.StatusNotFound, "branch not found")
+			return
+		}
+		if errors.Is(err, ErrBranchNotAllowed) {
+			helpers.WriteError(w, http.StatusForbidden, "branch does not belong to user's organization")
+			return
+		}
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}

@@ -2,15 +2,17 @@ openapi: 3.0.3
 info:
   title: Go Kasir API
   version: 1.0.0
-  description: Simple cashier API for product CRUD, checkout, and sales reporting.
+  description: Production-oriented POS backend API for catalog, checkout, customers, branches, and reporting.
 servers:
   - url: /
+security:
+  - BearerAuth: []
 paths:
   /health:
     get:
-      tags:
-        - Health
+      tags: [Health]
       summary: Health check
+      security: []
       responses:
         "200":
           description: API is running
@@ -18,76 +20,34 @@ paths:
             application/json:
               schema:
                 type: object
-                required:
-                  - status
-                  - message
                 properties:
                   status:
                     type: string
                     example: OK
-                  message:
-                    type: string
-                    example: API Running
-  /api/auth/login:
+  /api/v1/auth/login:
     post:
-      tags:
-        - Auth
+      tags: [Auth]
       summary: Login with username and password
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - username
-                - password
-              properties:
-                username:
-                  type: string
-                  example: admin
-                password:
-                  type: string
-                  example: admin123
+              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: Login successful
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Login successful
-                  token:
-                    type: string
-                    example: eyJhbGciOiJIUzI1NiIs...
-                  user:
-                    type: object
-        "400":
-          description: Invalid request
+                $ref: "#/components/schemas/LoginResponse"
         "401":
           description: Invalid credentials
-  /api/auth/logout:
-    post:
-      tags:
-        - Auth
-      summary: Logout (client-side token discard)
-      responses:
-        "200":
-          description: Logged out
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Message"
-  /api/auth/me:
+  /api/v1/auth/me:
     get:
-      tags:
-        - Auth
-      summary: Get current user
-      security:
-        - BearerAuth: []
+      tags: [Auth]
+      summary: Get the authenticated user
       responses:
         "200":
           description: Current user
@@ -96,161 +56,148 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "401":
-          description: Not authenticated
-  /api/products:
-    get:
-      tags:
-        - Products
-      summary: Get all products
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: name
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Filter products by name (case-insensitive)
-      responses:
-        "200":
-          description: List of products
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Product"
-        "401":
           description: Unauthorized
+  /api/v1/auth/change-password:
     post:
-      tags:
-        - Products
-      summary: Create a product
-      security:
-        - BearerAuth: []
+      tags: [Auth]
+      summary: Change the authenticated user's password
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProductInput"
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 6
+      responses:
+        "200":
+          description: Password changed
+  /api/v1/auth/switch-branch:
+    post:
+      tags: [Auth]
+      summary: Switch the active branch in the JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branch_id]
+              properties:
+                branch_id:
+                  type: integer
+      responses:
+        "200":
+          description: New branch-scoped token
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: List users in the system
+      description: Requires admin role.
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      tags: [Users]
+      summary: Create a user in the authenticated user's organization
+      description: Requires admin role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
       responses:
         "201":
-          description: Product created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Product"
-        "400":
-          description: Invalid request
-        "401":
-          description: Unauthorized
-  /api/products/{id}:
-    get:
-      tags:
-        - Products
-      summary: Get product by ID
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Product found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Product"
-        "400":
-          description: Invalid product ID
-        "404":
-          description: Product not found
-        "401":
-          description: Unauthorized
+          description: User created
+  /api/v1/users/{id}:
     put:
-      tags:
-        - Products
-      summary: Update product by ID
-      security:
-        - BearerAuth: []
+      tags: [Users]
+      summary: Update user role and permissions
+      description: Requires admin role.
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/ID"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProductInput"
+              type: object
+              properties:
+                role:
+                  type: string
+                  example: admin
+                permissions:
+                  type: array
+                  items:
+                    type: string
       responses:
         "200":
-          description: Product updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Product"
-        "400":
-          description: Invalid request
-        "404":
-          description: Product not found
-        "401":
-          description: Unauthorized
-    delete:
-      tags:
-        - Products
-      summary: Delete product by ID
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Product deleted
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Message"
-        "400":
-          description: Invalid product ID
-        "404":
-          description: Product not found
-        "401":
-          description: Unauthorized
-  /api/categories:
+          description: Role updated
+  /api/v1/branches:
     get:
-      tags:
-        - Categories
-      summary: Get all categories
-      security:
-        - BearerAuth: []
+      tags: [Branches]
+      summary: List branches in the authenticated organization
+      description: Requires admin role.
       responses:
         "200":
-          description: List of categories
+          description: Branches
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Category"
-        "401":
-          description: Unauthorized
+                  $ref: "#/components/schemas/Branch"
     post:
-      tags:
-        - Categories
-      summary: Create a category
-      security:
-        - BearerAuth: []
+      tags: [Branches]
+      summary: Create a branch in the authenticated organization
+      description: Requires admin role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BranchInput"
+      responses:
+        "201":
+          description: Branch created
+  /api/v1/branches/{id}:
+    put:
+      tags: [Branches]
+      summary: Update a branch in the authenticated organization
+      description: Requires admin role.
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BranchInput"
+      responses:
+        "200":
+          description: Branch updated
+  /api/v1/categories:
+    get:
+      tags: [Categories]
+      summary: List categories
+      responses:
+        "200":
+          description: Categories
+    post:
+      tags: [Categories]
+      summary: Create category
       requestBody:
         required: true
         content:
@@ -260,103 +207,124 @@ paths:
       responses:
         "201":
           description: Category created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Category"
-        "400":
-          description: Invalid request
-        "401":
-          description: Unauthorized
-  /api/categories/{id}:
+  /api/v1/categories/{id}:
     get:
-      tags:
-        - Categories
+      tags: [Categories]
       summary: Get category by ID
-      security:
-        - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/ID"
       responses:
         "200":
-          description: Category found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Category"
-        "400":
-          description: Invalid category ID
-        "404":
-          description: Category not found
-        "401":
-          description: Unauthorized
+          description: Category
     put:
-      tags:
-        - Categories
-      summary: Update category by ID
-      security:
-        - BearerAuth: []
+      tags: [Categories]
+      summary: Update category
       parameters:
-        - name: id
-          in: path
-          required: true
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Category updated
+    delete:
+      tags: [Categories]
+      summary: Delete category
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Category deleted
+  /api/v1/products:
+    get:
+      tags: [Products]
+      summary: List products
+      parameters:
+        - name: name
+          in: query
           schema:
-            type: integer
+            type: string
+      responses:
+        "200":
+          description: Products
+    post:
+      tags: [Products]
+      summary: Create product
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CategoryInput"
+              $ref: "#/components/schemas/ProductInput"
       responses:
-        "200":
-          description: Category updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Category"
-        "400":
-          description: Invalid request
-        "404":
-          description: Category not found
-        "401":
-          description: Unauthorized
-    delete:
-      tags:
-        - Categories
-      summary: Delete category by ID
-      security:
-        - BearerAuth: []
+        "201":
+          description: Product created
+  /api/v1/products/{id}:
+    get:
+      tags: [Products]
+      summary: Get product by ID
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+        - $ref: "#/components/parameters/ID"
       responses:
         "200":
-          description: Category deleted
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Message"
-        "400":
-          description: Invalid category ID
-        "404":
-          description: Category not found
-        "401":
-          description: Unauthorized
-  /api/checkout:
+          description: Product
+    put:
+      tags: [Products]
+      summary: Update product
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Product updated
+    delete:
+      tags: [Products]
+      summary: Delete product
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Product deleted
+  /api/v1/customers:
+    get:
+      tags: [Customers]
+      summary: List customers
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Customers
     post:
-      tags:
-        - Transactions
+      tags: [Customers]
+      summary: Create customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerInput"
+      responses:
+        "201":
+          description: Customer created
+  /api/v1/customers/{id}/purchases:
+    get:
+      tags: [Customers]
+      summary: Get customer purchase history
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Purchase history
+  /api/v1/payment-types:
+    get:
+      tags: [Payments]
+      summary: List payment types
+      responses:
+        "200":
+          description: Payment types
+  /api/v1/checkout:
+    post:
+      tags: [Transactions]
       summary: Create a checkout transaction
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -366,68 +334,77 @@ paths:
       responses:
         "200":
           description: Transaction created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Transaction"
-        "400":
-          description: Invalid request
-        "401":
-          description: Unauthorized
-  /api/report/hari-ini:
+  /api/v1/transactions:
     get:
-      tags:
-        - Reports
-      summary: Sales summary for today
-      security:
-        - BearerAuth: []
+      tags: [Transactions]
+      summary: List transactions
       responses:
         "200":
-          description: Sales summary
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SalesSummary"
-        "401":
-          description: Unauthorized
-  /api/report:
+          description: Transactions
+  /api/v1/report/dashboard:
     get:
-      tags:
-        - Reports
-      summary: Sales summary by date range
-      security:
-        - BearerAuth: []
+      tags: [Reports]
+      summary: Dashboard report
+      responses:
+        "200":
+          description: Dashboard data
+  /api/v1/report/today:
+    get:
+      tags: [Reports]
+      summary: Today's sales summary
+      responses:
+        "200":
+          description: Today's sales summary
+  /api/v1/report:
+    get:
+      tags: [Reports]
+      summary: Sales summary for date range
       parameters:
         - name: start_date
           in: query
-          required: true
           schema:
             type: string
             format: date
         - name: end_date
           in: query
-          required: true
           schema:
             type: string
             format: date
       responses:
         "200":
           description: Sales summary
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SalesSummary"
-        "400":
-          description: Missing or invalid dates
-        "401":
-          description: Unauthorized
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
   schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
     User:
       type: object
       properties:
@@ -439,184 +416,115 @@ components:
           type: string
         role:
           type: string
-        created_at:
-          type: string
-          format: date-time
-    Product:
-      type: object
-      required:
-        - id
-        - name
-        - price
-        - stock
-        - category_id
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: Instant Noodles
-        price:
-          type: integer
-          example: 3500
-        stock:
-          type: integer
-          example: 10
-        category_id:
-          type: integer
-          example: 2
-        category_name:
-          type: string
-          example: Beverages
-    ProductInput:
-      type: object
-      required:
-        - name
-        - price
-        - stock
-        - category_id
-      properties:
-        name:
-          type: string
-          example: Coffee
-        price:
-          type: integer
-          example: 2500
-        stock:
-          type: integer
-          example: 200
-        category_id:
-          type: integer
-          example: 2
-    Category:
-      type: object
-      required:
-        - id
-        - name
-        - description
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: Beverages
-        description:
-          type: string
-          example: Drinks and bottled water
-    CategoryInput:
-      type: object
-      required:
-        - name
-        - description
-      properties:
-        name:
-          type: string
-          example: Snacks
-        description:
-          type: string
-          example: Chips, biscuits, and light bites
-    Message:
-      type: object
-      required:
-        - message
-      properties:
-        message:
-          type: string
-          example: delete success
-    Transaction:
-      type: object
-      required:
-        - id
-        - total_amount
-        - created_at
-        - details
-      properties:
-        id:
-          type: integer
-          example: 1
-        total_amount:
-          type: integer
-          example: 45000
-        created_at:
-          type: string
-          format: date-time
-        details:
+        permissions:
           type: array
           items:
-            $ref: "#/components/schemas/TransactionDetail"
-    TransactionDetail:
+            type: string
+        org_id:
+          type: integer
+        branch_id:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+    CreateUserRequest:
       type: object
-      required:
-        - id
-        - transaction_id
-        - product_id
-        - quantity
-        - subtotal
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+    Branch:
+      type: object
       properties:
         id:
           type: integer
-          example: 1
-        transaction_id:
+        organization_id:
           type: integer
-          example: 1
-        product_id:
-          type: integer
-          example: 2
-        product_name:
+        name:
           type: string
-          example: Instant Noodles
-        quantity:
-          type: integer
-          example: 2
-        subtotal:
-          type: integer
-          example: 7000
-    CheckoutItem:
+        code:
+          type: string
+        address:
+          type: string
+        created_at:
+          type: string
+    BranchInput:
       type: object
-      required:
-        - product_id
-        - quantity
+      required: [name, code]
       properties:
-        product_id:
+        name:
+          type: string
+        code:
+          type: string
+        address:
+          type: string
+    CategoryInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    ProductInput:
+      type: object
+      required: [name, price]
+      properties:
+        name:
+          type: string
+        price:
           type: integer
-          example: 2
-        quantity:
+          minimum: 0
+        category_id:
           type: integer
-          example: 3
+          nullable: true
+    CustomerInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        address:
+          type: string
     CheckoutRequest:
       type: object
-      required:
-        - items
+      required: [branch_id, items]
       properties:
+        branch_id:
+          type: integer
+        customer_id:
+          type: integer
+          nullable: true
         items:
           type: array
           items:
-            $ref: "#/components/schemas/CheckoutItem"
-    SalesSummary:
-      type: object
-      required:
-        - total_revenue
-        - total_transactions
-      properties:
-        total_revenue:
-          type: integer
-          example: 45000
-        total_transactions:
-          type: integer
-          example: 5
-        top_product:
-          $ref: "#/components/schemas/TopProduct"
-    TopProduct:
-      type: object
-      required:
-        - name
-        - qty_sold
-      properties:
-        name:
-          type: string
-          example: Instant Noodles
-        qty_sold:
-          type: integer
-          example: 12
+            type: object
+            required: [product_id, quantity]
+            properties:
+              product_id:
+                type: integer
+              quantity:
+                type: integer
+                minimum: 1
+        payments:
+          type: array
+          items:
+            type: object
+            required: [type, amount]
+            properties:
+              type:
+                type: string
+                example: cash
+              amount:
+                type: integer
+                minimum: 1

@@ -74,8 +74,9 @@ func (r *userRepository) FindByUsername(username string) (*User, error) {
 }
 
 func (r *userRepository) Create(u *User) error {
-	return r.db.QueryRow("INSERT INTO users (username, password_hash, name, role) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
-		u.Username, u.PasswordHash, u.Name, u.Role).Scan(&u.ID, &u.CreatedAt)
+	return r.db.QueryRow(`INSERT INTO users (username, password_hash, name, role, organization_id, branch_id)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+		u.Username, u.PasswordHash, u.Name, u.Role, u.OrganizationID, u.BranchID).Scan(&u.ID, &u.CreatedAt)
 }
 
 func (r *userRepository) UpdatePassword(userID int, newHash string) error {

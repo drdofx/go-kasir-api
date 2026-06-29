@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -36,9 +41,26 @@ func main() {
 	viper.SetDefault("CORS_ALLOWED_ORIGIN", "http://localhost:8080")
 	viper.SetDefault("LOG_LEVEL", "info")
 	viper.SetDefault("MIGRATIONS_PATH", "migrations")
+	viper.SetDefault("APP_ENV", "development")
+	viper.SetDefault("AUTO_MIGRATE", true)
+	viper.SetDefault("SERVER_READ_TIMEOUT", "10s")
+	viper.SetDefault("SERVER_READ_HEADER_TIMEOUT", "5s")
+	viper.SetDefault("SERVER_WRITE_TIMEOUT", "30s")
+	viper.SetDefault("SERVER_IDLE_TIMEOUT", "120s")
+	viper.SetDefault("SERVER_SHUTDOWN_TIMEOUT", "10s")
+	viper.SetDefault("MAX_REQUEST_BODY_BYTES", 1048576)
 	viper.AutomaticEnv()
 	viper.SetConfigFile(".env")
-	viper.ReadInConfig()
+	if err := viper.ReadInConfig(); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if !os.IsNotExist(err) && !errors.As(err, &notFound) {
+			log.Fatalf("failed to read config: %v", err)
+		}
+	}
+
+	if err := validateConfig(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	logLevel, err := zerolog.ParseLevel(viper.GetString("LOG_LEVEL"))
 	if err != nil {
@@ -52,8 +74,10 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := database.RunMigrations(db, viper.GetString("MIGRATIONS_PATH")); err != nil {
-		log.Fatalf("failed to run migrations: %v", err)
+	if viper.GetBool("AUTO_MIGRATE") {
+		if err := database.RunMigrations(db, viper.GetString("MIGRATIONS_PATH")); err != nil {
+			log.Fatalf("failed to run migrations: %v", err)
+		}
 	}
 	seedDefaultOrg(db)
 
@@ -71,8 +95,9 @@ func main() {
 	branchRepo := branch.NewBranchRepository(db)
 
 	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
+	branchRepoForAuth := &authBranchRepoWrapper{branchRepo}
 
-	authService := auth.NewAuthService(userRepo, viper.GetString("JWT_SECRET"))
+	authService := auth.NewAuthService(userRepo, branchRepoForAuth, viper.GetString("JWT_SECRET"))
 	categoryService := category.NewCategoryService(categoryRepo)
 	productService := product.NewProductService(productRepo, catRepoForProduct)
 	customerService := customer.NewCustomerService(customerRepo)
@@ -101,6 +126,7 @@ func main() {
 
 	corsMiddleware := middleware.CORS(viper.GetString("CORS_ALLOWED_ORIGIN"))
 	jwtMiddleware := middleware.JWTAuth(authService)
+	adminOnly := middleware.RequireRole("admin")
 
 	mux := http.NewServeMux()
 
@@ -110,13 +136,13 @@ func main() {
 
 	// Old API routes (backward compatibility)
 	mux.HandleFunc("/api/auth/login", authHandler.HandleLogin)
-	mux.HandleFunc("/api/auth/logout", authHandler.HandleLogout)
-	mux.HandleFunc("/api/auth/me", authHandler.HandleMe)
+	mux.Handle("/api/auth/logout", middleware.Chain(http.HandlerFunc(authHandler.HandleLogout), jwtMiddleware))
+	mux.Handle("/api/auth/me", middleware.Chain(http.HandlerFunc(authHandler.HandleMe), jwtMiddleware))
 	mux.Handle("/api/auth/change-password", middleware.Chain(http.HandlerFunc(authHandler.HandleChangePassword), jwtMiddleware))
 	mux.Handle("/api/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), jwtMiddleware))
-	mux.Handle("/api/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtMiddleware))
+	mux.Handle("/api/products/{id}", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtMiddleware))
 	mux.Handle("/api/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), jwtMiddleware))
-	mux.Handle("/api/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtMiddleware))
+	mux.Handle("/api/categories/{id}", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtMiddleware))
 	mux.Handle("/api/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtMiddleware))
 	mux.Handle("/api/transactions", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactions), jwtMiddleware))
 	mux.Handle("/api/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
@@ -124,34 +150,38 @@ func main() {
 
 	// V1 API routes
 	mux.HandleFunc("/api/v1/auth/login", authHandler.HandleLogin)
-	mux.HandleFunc("/api/v1/auth/logout", authHandler.HandleLogout)
-	mux.HandleFunc("/api/v1/auth/me", authHandler.HandleMe)
+	mux.Handle("/api/v1/auth/logout", middleware.Chain(http.HandlerFunc(authHandler.HandleLogout), jwtMiddleware))
+	mux.Handle("/api/v1/auth/me", middleware.Chain(http.HandlerFunc(authHandler.HandleMe), jwtMiddleware))
 	mux.Handle("/api/v1/auth/change-password", middleware.Chain(http.HandlerFunc(authHandler.HandleChangePassword), jwtMiddleware))
 	mux.Handle("/api/v1/products", middleware.Chain(http.HandlerFunc(productHandler.HandleProducts), jwtMiddleware))
-	mux.Handle("/api/v1/products/", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtMiddleware))
+	mux.Handle("/api/v1/products/{id}", middleware.Chain(http.HandlerFunc(productHandler.HandleProductByID), jwtMiddleware))
 	mux.Handle("/api/v1/categories", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategories), jwtMiddleware))
-	mux.Handle("/api/v1/categories/", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtMiddleware))
+	mux.Handle("/api/v1/categories/{id}", middleware.Chain(http.HandlerFunc(categoryHandler.HandleCategoryByID), jwtMiddleware))
 	mux.Handle("/api/v1/checkout", middleware.Chain(http.HandlerFunc(transactionHandler.HandleCheckout), jwtMiddleware))
 	mux.Handle("/api/v1/transactions", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactions), jwtMiddleware))
-	mux.Handle("/api/v1/transactions/", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactionByID), jwtMiddleware))
+	mux.Handle("/api/v1/transactions/{id}", middleware.Chain(http.HandlerFunc(transactionHandler.HandleTransactionByID), jwtMiddleware))
 	mux.Handle("/api/v1/customers", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomers), jwtMiddleware))
-	mux.Handle("/api/v1/customers/", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomerByID), jwtMiddleware))
+	mux.Handle("/api/v1/customers/{id}", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomerByID), jwtMiddleware))
+	mux.Handle("/api/v1/customers/{id}/purchases", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomerHistory), jwtMiddleware))
+	mux.Handle("/api/v1/customers/{id}/history", middleware.Chain(http.HandlerFunc(customerHandler.HandleCustomerHistory), jwtMiddleware))
 	mux.Handle("/api/v1/payment-types", middleware.Chain(http.HandlerFunc(paymentHandler.HandlePaymentTypes), jwtMiddleware))
 	mux.Handle("/api/v1/returns", middleware.Chain(http.HandlerFunc(returnHandler.HandleReturns), jwtMiddleware))
-	mux.Handle("/api/v1/returns/", middleware.Chain(http.HandlerFunc(returnHandler.HandleGetReturn), jwtMiddleware))
+	mux.Handle("/api/v1/returns/{id}", middleware.Chain(http.HandlerFunc(returnHandler.HandleGetReturn), jwtMiddleware))
 	mux.Handle("/api/v1/suppliers", middleware.Chain(http.HandlerFunc(supplierHandler.HandleSuppliers), jwtMiddleware))
-	mux.Handle("/api/v1/suppliers/", middleware.Chain(http.HandlerFunc(supplierHandler.HandleSupplierByID), jwtMiddleware))
+	mux.Handle("/api/v1/suppliers/{id}", middleware.Chain(http.HandlerFunc(supplierHandler.HandleSupplierByID), jwtMiddleware))
 	mux.Handle("/api/v1/purchase-orders", middleware.Chain(http.HandlerFunc(poHandler.HandlePOs), jwtMiddleware))
-	mux.Handle("/api/v1/purchase-orders/", middleware.Chain(http.HandlerFunc(poHandler.HandlePOByID), jwtMiddleware))
+	mux.Handle("/api/v1/purchase-orders/{id}", middleware.Chain(http.HandlerFunc(poHandler.HandlePOByID), jwtMiddleware))
+	mux.Handle("/api/v1/purchase-orders/{id}/receive", middleware.Chain(http.HandlerFunc(poHandler.HandleReceivePO), jwtMiddleware))
 	mux.Handle("/api/v1/inventory/alerts", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleAlerts), jwtMiddleware))
-	mux.Handle("/api/v1/inventory/alerts/", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleSetThreshold), jwtMiddleware))
-	mux.Handle("/api/v1/users", middleware.Chain(http.HandlerFunc(authHandler.HandleUsers), jwtMiddleware))
-	mux.Handle("/api/v1/users/", middleware.Chain(http.HandlerFunc(authHandler.HandleUpdateUserRole), jwtMiddleware))
-	mux.Handle("/api/v1/receipts/", middleware.Chain(http.HandlerFunc(receiptHandler.HandleGetReceipt), jwtMiddleware))
+	mux.Handle("/api/v1/inventory/alerts/{id}", middleware.Chain(http.HandlerFunc(inventoryHandler.HandleSetThreshold), jwtMiddleware))
+	mux.Handle("/api/v1/users", middleware.Chain(http.HandlerFunc(authHandler.HandleUsers), jwtMiddleware, adminOnly))
+	mux.Handle("/api/v1/users/{id}", middleware.Chain(http.HandlerFunc(authHandler.HandleUpdateUserRole), jwtMiddleware, adminOnly))
+	mux.Handle("/api/v1/receipts/{id}", middleware.Chain(http.HandlerFunc(receiptHandler.HandleGetReceipt), jwtMiddleware))
 	mux.Handle("/api/v1/auth/switch-branch", middleware.Chain(http.HandlerFunc(authHandler.HandleSwitchBranch), jwtMiddleware))
-	mux.Handle("/api/v1/branches", middleware.Chain(http.HandlerFunc(branchHandler.HandleBranches), jwtMiddleware))
-	mux.Handle("/api/v1/branches/", middleware.Chain(http.HandlerFunc(branchHandler.HandleBranchByID), jwtMiddleware))
+	mux.Handle("/api/v1/branches", middleware.Chain(http.HandlerFunc(branchHandler.HandleBranches), jwtMiddleware, adminOnly))
+	mux.Handle("/api/v1/branches/{id}", middleware.Chain(http.HandlerFunc(branchHandler.HandleBranchByID), jwtMiddleware, adminOnly))
 	mux.Handle("/api/v1/report/hari-ini", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
+	mux.Handle("/api/v1/report/today", middleware.Chain(http.HandlerFunc(reportHandler.HandleTodayReport), jwtMiddleware))
 	mux.Handle("/api/v1/report", middleware.Chain(http.HandlerFunc(reportHandler.HandleReport), jwtMiddleware))
 	mux.Handle("/api/v1/report/dashboard", middleware.Chain(http.HandlerFunc(reportHandler.HandleDashboard), jwtMiddleware))
 	mux.Handle("/api/v1/report/weekly", middleware.Chain(http.HandlerFunc(reportHandler.HandleWeeklyReport), jwtMiddleware))
@@ -162,15 +192,23 @@ func main() {
 
 	wrapped := middleware.Chain(mux,
 		middleware.RequestID(),
+		middleware.BodyLimit(viper.GetInt64("MAX_REQUEST_BODY_BYTES")),
 		corsMiddleware,
 		middleware.SecurityHeaders(),
 		middleware.Logger(viper.GetString("LOG_LEVEL")),
 	)
 
 	server := &http.Server{
-		Addr:    ":" + viper.GetString("PORT"),
-		Handler: wrapped,
+		Addr:              ":" + viper.GetString("PORT"),
+		Handler:           wrapped,
+		ReadTimeout:       mustDuration("SERVER_READ_TIMEOUT"),
+		ReadHeaderTimeout: mustDuration("SERVER_READ_HEADER_TIMEOUT"),
+		WriteTimeout:      mustDuration("SERVER_WRITE_TIMEOUT"),
+		IdleTimeout:       mustDuration("SERVER_IDLE_TIMEOUT"),
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	go func() {
 		log.Printf("server starting on port %s", viper.GetString("PORT"))
@@ -179,11 +217,66 @@ func main() {
 		}
 	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	<-ctx.Done()
 	log.Println("shutting down server...")
-	server.Close()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), mustDuration("SERVER_SHUTDOWN_TIMEOUT"))
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("graceful shutdown failed: %v", err)
+		if err := server.Close(); err != nil {
+			log.Printf("server close failed: %v", err)
+		}
+	}
+}
+
+func validateConfig() error {
+	if strings.TrimSpace(viper.GetString("DB_CONN")) == "" {
+		return fmt.Errorf("DB_CONN is required")
+	}
+
+	jwtSecret := strings.TrimSpace(viper.GetString("JWT_SECRET"))
+	if jwtSecret == "" {
+		return fmt.Errorf("JWT_SECRET is required")
+	}
+
+	appEnv := strings.ToLower(strings.TrimSpace(viper.GetString("APP_ENV")))
+	if appEnv == "production" {
+		if len(jwtSecret) < 32 {
+			return fmt.Errorf("JWT_SECRET must be at least 32 characters in production")
+		}
+		if jwtSecret == "change-this-secret-in-production" {
+			return fmt.Errorf("JWT_SECRET must not use the default development value in production")
+		}
+		if strings.TrimSpace(viper.GetString("ADMIN_PASSWORD")) == "" {
+			return fmt.Errorf("ADMIN_PASSWORD is required in production")
+		}
+	}
+	if viper.GetInt64("MAX_REQUEST_BODY_BYTES") < 0 {
+		return fmt.Errorf("MAX_REQUEST_BODY_BYTES must be greater than or equal to 0")
+	}
+
+	for _, key := range []string{
+		"SERVER_READ_TIMEOUT",
+		"SERVER_READ_HEADER_TIMEOUT",
+		"SERVER_WRITE_TIMEOUT",
+		"SERVER_IDLE_TIMEOUT",
+		"SERVER_SHUTDOWN_TIMEOUT",
+	} {
+		if _, err := time.ParseDuration(viper.GetString(key)); err != nil {
+			return fmt.Errorf("%s must be a valid duration: %w", key, err)
+		}
+	}
+
+	return nil
+}
+
+func mustDuration(key string) time.Duration {
+	d, err := time.ParseDuration(viper.GetString(key))
+	if err != nil {
+		log.Fatalf("invalid duration for %s: %v", key, err)
+	}
+	return d
 }
 
 type categoryRepoWrapper struct {
@@ -199,6 +292,21 @@ func (w *categoryRepoWrapper) FindByID(id int) (*product.Category, error) {
 		return nil, nil
 	}
 	return &product.Category{ID: c.ID, Name: c.Name, Description: c.Description}, nil
+}
+
+type authBranchRepoWrapper struct {
+	repo branch.BranchRepository
+}
+
+func (w *authBranchRepoWrapper) FindByID(id int) (*auth.Branch, error) {
+	b, err := w.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if b == nil {
+		return nil, nil
+	}
+	return &auth.Branch{ID: b.ID, OrganizationID: b.OrganizationID}, nil
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +356,7 @@ func seedDefaultOrg(db *sql.DB) {
 			log.Printf("seed user: %v", err)
 			return
 		}
-		log.Printf("seeded admin user: kasir / %s (org=%d, branch=%d)", adminPass, orgID, branchID)
+		log.Printf("seeded admin user: kasir (org=%d, branch=%d)", orgID, branchID)
 	} else {
 		db.Exec("UPDATE users SET organization_id = COALESCE(organization_id, $1), branch_id = COALESCE(branch_id, $2) WHERE organization_id IS NULL OR organization_id = 0", orgID, branchID)
 	}

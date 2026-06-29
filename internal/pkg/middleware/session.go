@@ -7,13 +7,14 @@ import (
 )
 
 type ContextUser struct {
-	ID        int
-	Username  string
-	Name      string
-	Role      string
-	OrgID     int
-	BranchID  *int
-	CreatedAt string
+	ID          int
+	Username    string
+	Name        string
+	Role        string
+	Permissions []string
+	OrgID       int
+	BranchID    *int
+	CreatedAt   string
 }
 
 type contextKey string
@@ -22,7 +23,7 @@ const userContextKey contextKey = "user"
 const orgContextKey contextKey = "org_id"
 
 type tokenValidator interface {
-	ValidateToken(tokenStr string) (int, string, string, int, *int, error)
+	ValidateToken(tokenStr string) (int, string, string, []string, int, *int, error)
 }
 
 func JWTAuth(validator tokenValidator) func(http.Handler) http.Handler {
@@ -30,28 +31,56 @@ func JWTAuth(validator tokenValidator) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
+				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"message":"unauthorized","code":401}`, http.StatusUnauthorized)
 				return
 			}
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || parts[0] != "Bearer" {
+				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"message":"unauthorized","code":401}`, http.StatusUnauthorized)
 				return
 			}
-			userID, username, role, orgID, branchID, err := validator.ValidateToken(parts[1])
+			userID, username, role, permissions, orgID, branchID, err := validator.ValidateToken(parts[1])
 			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"message":"unauthorized","code":401}`, http.StatusUnauthorized)
 				return
 			}
 			ctx := context.WithValue(r.Context(), userContextKey, &ContextUser{
-				ID:       userID,
-				Username: username,
-				Role:     role,
-				OrgID:    orgID,
-				BranchID: branchID,
+				ID:          userID,
+				Username:    username,
+				Role:        role,
+				Permissions: permissions,
+				OrgID:       orgID,
+				BranchID:    branchID,
 			})
 			ctx = context.WithValue(ctx, orgContextKey, orgID)
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		allowed[strings.ToLower(strings.TrimSpace(role))] = struct{}{}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := UserFromContext(r.Context())
+			if user == nil {
+				w.Header().Set("Content-Type", "application/json")
+				http.Error(w, `{"message":"unauthorized","code":401}`, http.StatusUnauthorized)
+				return
+			}
+			if _, ok := allowed[strings.ToLower(user.Role)]; !ok {
+				w.Header().Set("Content-Type", "application/json")
+				http.Error(w, `{"message":"forbidden","code":403}`, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
