@@ -18,6 +18,7 @@ type CategoryRepository interface {
 	FindAllForOrg(orgID int) ([]Category, error)
 	FindByID(id int) (*Category, error)
 	FindByIDForOrg(orgID, id int) (*Category, error)
+	ExistsForOrg(orgID, id int) (bool, error)
 	Create(c *Category) error
 	CreateForOrg(orgID int, c *Category) error
 	Update(c *Category) error
@@ -86,6 +87,12 @@ func (r *categoryRepository) FindByIDForOrg(orgID, id int) (*Category, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+func (r *categoryRepository) ExistsForOrg(orgID, id int) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM categories WHERE organization_id = $1 AND id = $2)", orgID, id).Scan(&exists)
+	return exists, err
 }
 
 func (r *categoryRepository) Create(c *Category) error {

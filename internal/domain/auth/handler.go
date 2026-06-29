@@ -248,10 +248,6 @@ func (h *AuthHandler) HandleSwitchBranch(w http.ResponseWriter, r *http.Request)
 			helpers.WriteError(w, http.StatusNotFound, "branch not found")
 			return
 		}
-		if errors.Is(err, ErrBranchNotAllowed) {
-			helpers.WriteError(w, http.StatusForbidden, "branch does not belong to user's organization")
-			return
-		}
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}

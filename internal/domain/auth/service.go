@@ -19,7 +19,6 @@ var (
 	ErrUserNotFound       = errors.New("user not found")
 	ErrIncorrectPassword  = errors.New("current password is incorrect")
 	ErrBranchNotFound     = errors.New("branch not found")
-	ErrBranchNotAllowed   = errors.New("branch does not belong to user's organization")
 )
 
 type AuthService struct {
@@ -31,12 +30,7 @@ type AuthService struct {
 }
 
 type BranchRepository interface {
-	FindByID(id int) (*Branch, error)
-}
-
-type Branch struct {
-	ID             int
-	OrganizationID int
+	BelongsToOrg(branchID, orgID int) (bool, error)
 }
 
 func NewAuthService(userRepo UserRepository, branchRepo BranchRepository, jwtSecret string, accessTokenTTL, refreshTokenTTL time.Duration) *AuthService {
@@ -146,15 +140,12 @@ func (s *AuthService) SwitchBranch(userID, newBranchID int) (string, error) {
 	if user == nil {
 		return "", ErrUserNotFound
 	}
-	branch, err := s.branchRepo.FindByID(newBranchID)
+	belongs, err := s.branchRepo.BelongsToOrg(newBranchID, user.OrganizationID)
 	if err != nil {
 		return "", err
 	}
-	if branch == nil {
+	if !belongs {
 		return "", ErrBranchNotFound
-	}
-	if branch.OrganizationID != user.OrganizationID {
-		return "", ErrBranchNotAllowed
 	}
 	claims := jwt.MapClaims{
 		"user_id":     user.ID,

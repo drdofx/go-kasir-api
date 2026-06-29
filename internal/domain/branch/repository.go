@@ -21,6 +21,7 @@ type branchRepository struct {
 type BranchRepository interface {
 	FindByOrgID(orgID int) ([]Branch, error)
 	FindByID(id int) (*Branch, error)
+	BelongsToOrg(branchID, orgID int) (bool, error)
 	Create(b *Branch) error
 	Update(b *Branch) error
 }
@@ -56,6 +57,12 @@ func (r *branchRepository) FindByID(id int) (*Branch, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+func (r *branchRepository) BelongsToOrg(branchID, orgID int) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM branches WHERE id = $1 AND organization_id = $2)", branchID, orgID).Scan(&exists)
+	return exists, err
 }
 
 func (r *branchRepository) Create(b *Branch) error {

@@ -69,12 +69,9 @@ func main() {
 	receiptRepo := receipt.NewReceiptRepository(db)
 	branchRepo := branch.NewBranchRepository(db)
 
-	catRepoForProduct := &categoryRepoWrapper{categoryRepo}
-	branchRepoForAuth := &authBranchRepoWrapper{branchRepo}
-
-	authService := auth.NewAuthService(userRepo, branchRepoForAuth, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	authService := auth.NewAuthService(userRepo, branchRepo, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	categoryService := category.NewCategoryService(categoryRepo)
-	productService := product.NewProductService(productRepo, catRepoForProduct)
+	productService := product.NewProductService(productRepo, categoryRepo)
 	customerService := customer.NewCustomerService(customerRepo)
 	paymentService := payment.NewPaymentService(paymentRepo)
 	returnService := returns.NewReturnService(returnRepo, transactionRepo)
@@ -205,36 +202,6 @@ func main() {
 			log.Printf("server close failed: %v", err)
 		}
 	}
-}
-
-type categoryRepoWrapper struct {
-	repo category.CategoryRepository
-}
-
-func (w *categoryRepoWrapper) FindByIDForOrg(orgID, id int) (*product.Category, error) {
-	c, err := w.repo.FindByIDForOrg(orgID, id)
-	if err != nil {
-		return nil, err
-	}
-	if c == nil {
-		return nil, nil
-	}
-	return &product.Category{ID: c.ID, Name: c.Name, Description: c.Description}, nil
-}
-
-type authBranchRepoWrapper struct {
-	repo branch.BranchRepository
-}
-
-func (w *authBranchRepoWrapper) FindByID(id int) (*auth.Branch, error) {
-	b, err := w.repo.FindByID(id)
-	if err != nil {
-		return nil, err
-	}
-	if b == nil {
-		return nil, nil
-	}
-	return &auth.Branch{ID: b.ID, OrganizationID: b.OrganizationID}, nil
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {

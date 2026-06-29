@@ -10,13 +10,7 @@ var (
 )
 
 type CategoryRepository interface {
-	FindByIDForOrg(orgID, id int) (*Category, error)
-}
-
-type Category struct {
-	ID          int
-	Name        string
-	Description string
+	ExistsForOrg(orgID, id int) (bool, error)
 }
 
 type ProductService struct {
@@ -52,11 +46,11 @@ func (s *ProductService) Create(p *Product) error {
 		return ErrNegativePrice
 	}
 	if p.CategoryID != nil && *p.CategoryID > 0 {
-		cat, err := s.categoryRepo.FindByIDForOrg(p.OrganizationID, *p.CategoryID)
+		exists, err := s.categoryRepo.ExistsForOrg(p.OrganizationID, *p.CategoryID)
 		if err != nil {
 			return err
 		}
-		if cat == nil {
+		if !exists {
 			return ErrCategoryNotFound
 		}
 	}
@@ -72,11 +66,11 @@ func (s *ProductService) CreateForOrg(orgID int, p *Product) error {
 		return ErrNegativePrice
 	}
 	if p.CategoryID != nil && *p.CategoryID > 0 {
-		cat, err := s.categoryRepo.FindByIDForOrg(orgID, *p.CategoryID)
+		exists, err := s.categoryRepo.ExistsForOrg(orgID, *p.CategoryID)
 		if err != nil {
 			return err
 		}
-		if cat == nil {
+		if !exists {
 			return ErrCategoryNotFound
 		}
 	}
@@ -98,11 +92,11 @@ func (s *ProductService) Update(p *Product) error {
 		return ErrProductNotFound
 	}
 	if p.CategoryID != nil && *p.CategoryID > 0 {
-		cat, err := s.categoryRepo.FindByIDForOrg(p.OrganizationID, *p.CategoryID)
+		exists, err := s.categoryRepo.ExistsForOrg(p.OrganizationID, *p.CategoryID)
 		if err != nil {
 			return err
 		}
-		if cat == nil {
+		if !exists {
 			return ErrCategoryNotFound
 		}
 	}
@@ -125,11 +119,11 @@ func (s *ProductService) UpdateForOrg(orgID int, p *Product) error {
 		return ErrProductNotFound
 	}
 	if p.CategoryID != nil && *p.CategoryID > 0 {
-		cat, err := s.categoryRepo.FindByIDForOrg(orgID, *p.CategoryID)
+		exists, err := s.categoryRepo.ExistsForOrg(orgID, *p.CategoryID)
 		if err != nil {
 			return err
 		}
-		if cat == nil {
+		if !exists {
 			return ErrCategoryNotFound
 		}
 	}

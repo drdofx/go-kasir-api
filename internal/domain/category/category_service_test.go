@@ -37,6 +37,11 @@ func (m *mockCategoryRepo) FindByIDForOrg(orgID, id int) (*Category, error) {
 	return args.Get(0).(*Category), args.Error(1)
 }
 
+func (m *mockCategoryRepo) ExistsForOrg(orgID, id int) (bool, error) {
+	args := m.Called(orgID, id)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *mockCategoryRepo) Create(c *Category) error {
 	args := m.Called(c)
 	return args.Error(0)
