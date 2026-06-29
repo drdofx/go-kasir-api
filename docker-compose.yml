@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:18-alpine
+    image: postgres:17-alpine
     container_name: kasir-db
     environment:
       POSTGRES_USER: kasir
@@ -24,7 +24,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       PORT: 8080
-      DB_CONN: postgres://kasir:kasir123@db:5432/kasir?sslmode=disable
+      DB_CONN: ${DB_CONN:-postgres://kasir:kasir123@db:5432/kasir?sslmode=disable}
       CORS_ALLOWED_ORIGIN: ${CORS_ALLOWED_ORIGIN:-http://localhost:5173,http://localhost:8080}
       LOG_LEVEL: info
       AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
