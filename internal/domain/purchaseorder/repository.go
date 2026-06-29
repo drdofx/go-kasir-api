@@ -8,24 +8,26 @@ import (
 )
 
 type PurchaseOrder struct {
-	ID          int
-	SupplierID  int
-	SupplierName string
-	Status      string
-	TotalAmount int
-	CreatedAt   time.Time
-	ReceivedAt  *time.Time
-	Items       []POItem
+	ID             int
+	SupplierID     int
+	SupplierName   string
+	Status         string
+	TotalAmount    int
+	OrganizationID int
+	BranchID       *int
+	CreatedAt      time.Time
+	ReceivedAt     *time.Time
+	Items          []POItem
 }
 
 type POItem struct {
-	ID             int
+	ID              int
 	PurchaseOrderID int
-	ProductID      int
-	ProductName    string
-	Quantity       int
-	UnitPrice      int
-	Subtotal       int
+	ProductID       int
+	ProductName     string
+	Quantity        int
+	UnitPrice       int
+	Subtotal        int
 }
 
 type poRepository struct {
@@ -39,13 +41,19 @@ type PendingProduct struct {
 
 type PurchaseOrderRepository interface {
 	FindAll() ([]PurchaseOrder, error)
+	FindAllForOrg(orgID int) ([]PurchaseOrder, error)
 	FindByID(id int) (*PurchaseOrder, error)
+	FindByIDForOrg(orgID, id int) (*PurchaseOrder, error)
 	BeginTx() (*sql.Tx, error)
 	InsertPO(tx *sql.Tx, supplierID, totalAmount int) (int, error)
+	InsertPOForOrg(tx *sql.Tx, orgID, branchID, supplierID, totalAmount int) (int, error)
 	InsertPOItems(tx *sql.Tx, poID int, items []POItemRequest, products []PricedProduct) error
 	LockProducts(tx *sql.Tx, ids []int) ([]PricedProduct, error)
+	LockProductsForOrg(tx *sql.Tx, orgID int, ids []int) ([]PricedProduct, error)
 	UpdateStock(tx *sql.Tx, productID, quantity int) error
+	UpdateBranchStock(tx *sql.Tx, branchID, productID, quantity int) error
 	MarkReceived(tx *sql.Tx, poID int) error
+	MarkReceivedForOrg(tx *sql.Tx, orgID, poID int) error
 }
 
 type PricedProduct struct {
@@ -89,11 +97,61 @@ func (r *poRepository) FindAll() ([]PurchaseOrder, error) {
 	return pos, nil
 }
 
+func (r *poRepository) FindAllForOrg(orgID int) ([]PurchaseOrder, error) {
+	rows, err := r.db.Query(`SELECT po.id, po.supplier_id, COALESCE(s.name, ''), po.status, po.total_amount,
+			COALESCE(po.organization_id, 0), po.branch_id, po.created_at, po.received_at
+		FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id
+		WHERE po.organization_id = $1 ORDER BY po.created_at DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pos []PurchaseOrder
+	for rows.Next() {
+		var po PurchaseOrder
+		if err := rows.Scan(&po.ID, &po.SupplierID, &po.SupplierName, &po.Status, &po.TotalAmount, &po.OrganizationID, &po.BranchID, &po.CreatedAt, &po.ReceivedAt); err != nil {
+			return nil, err
+		}
+		pos = append(pos, po)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range pos {
+		items, err := r.getItems(pos[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		pos[i].Items = items
+	}
+	return pos, nil
+}
+
 func (r *poRepository) FindByID(id int) (*PurchaseOrder, error) {
 	row := r.db.QueryRow(`SELECT po.id, po.supplier_id, COALESCE(s.name, ''), po.status, po.total_amount, po.created_at, po.received_at
 		FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = $1`, id)
 	po := &PurchaseOrder{}
 	if err := row.Scan(&po.ID, &po.SupplierID, &po.SupplierName, &po.Status, &po.TotalAmount, &po.CreatedAt, &po.ReceivedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	items, err := r.getItems(po.ID)
+	if err != nil {
+		return nil, err
+	}
+	po.Items = items
+	return po, nil
+}
+
+func (r *poRepository) FindByIDForOrg(orgID, id int) (*PurchaseOrder, error) {
+	row := r.db.QueryRow(`SELECT po.id, po.supplier_id, COALESCE(s.name, ''), po.status, po.total_amount,
+			COALESCE(po.organization_id, 0), po.branch_id, po.created_at, po.received_at
+		FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id
+		WHERE po.organization_id = $1 AND po.id = $2`, orgID, id)
+	po := &PurchaseOrder{}
+	if err := row.Scan(&po.ID, &po.SupplierID, &po.SupplierName, &po.Status, &po.TotalAmount, &po.OrganizationID, &po.BranchID, &po.CreatedAt, &po.ReceivedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -130,6 +188,13 @@ func (r *poRepository) BeginTx() (*sql.Tx, error) { return r.db.Begin() }
 func (r *poRepository) InsertPO(tx *sql.Tx, supplierID, totalAmount int) (int, error) {
 	var id int
 	err := tx.QueryRow("INSERT INTO purchase_orders (supplier_id, total_amount) VALUES ($1, $2) RETURNING id", supplierID, totalAmount).Scan(&id)
+	return id, err
+}
+
+func (r *poRepository) InsertPOForOrg(tx *sql.Tx, orgID, branchID, supplierID, totalAmount int) (int, error) {
+	var id int
+	err := tx.QueryRow("INSERT INTO purchase_orders (organization_id, branch_id, supplier_id, total_amount) VALUES ($1, $2, $3, $4) RETURNING id",
+		orgID, branchID, supplierID, totalAmount).Scan(&id)
 	return id, err
 }
 
@@ -187,12 +252,49 @@ func (r *poRepository) LockProducts(tx *sql.Tx, ids []int) ([]PricedProduct, err
 	return ps, rows.Err()
 }
 
+func (r *poRepository) LockProductsForOrg(tx *sql.Tx, orgID int, ids []int) ([]PricedProduct, error) {
+	phs := make([]string, len(ids))
+	args := make([]interface{}, 0, len(ids)+1)
+	args = append(args, orgID)
+	for i, id := range ids {
+		phs[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, id)
+	}
+	rows, err := tx.Query(fmt.Sprintf("SELECT id, name, price FROM products WHERE organization_id = $1 AND id IN (%s)", strings.Join(phs, ",")), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ps []PricedProduct
+	for rows.Next() {
+		var p PricedProduct
+		if err := rows.Scan(&p.ID, &p.Name, &p.Price); err != nil {
+			return nil, err
+		}
+		ps = append(ps, p)
+	}
+	return ps, rows.Err()
+}
+
 func (r *poRepository) UpdateStock(tx *sql.Tx, productID, quantity int) error {
 	_, err := tx.Exec("UPDATE products SET stock = stock + $1 WHERE id = $2", quantity, productID)
 	return err
 }
 
+func (r *poRepository) UpdateBranchStock(tx *sql.Tx, branchID, productID, quantity int) error {
+	_, err := tx.Exec(`INSERT INTO product_stocks (product_id, branch_id, stock)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (product_id, branch_id) DO UPDATE SET stock = product_stocks.stock + EXCLUDED.stock`,
+		productID, branchID, quantity)
+	return err
+}
+
 func (r *poRepository) MarkReceived(tx *sql.Tx, poID int) error {
 	_, err := tx.Exec("UPDATE purchase_orders SET status = 'received', received_at = NOW() WHERE id = $1", poID)
+	return err
+}
+
+func (r *poRepository) MarkReceivedForOrg(tx *sql.Tx, orgID, poID int) error {
+	_, err := tx.Exec("UPDATE purchase_orders SET status = 'received', received_at = NOW() WHERE organization_id = $1 AND id = $2", orgID, poID)
 	return err
 }

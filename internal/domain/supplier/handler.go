@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type SupplierHandler struct {
@@ -51,10 +52,15 @@ func toResponses(ss []Supplier) []supplierResponse {
 }
 
 func (h *SupplierHandler) HandleSuppliers(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		search := r.URL.Query().Get("search")
-		ss, err := h.service.FindAll(search)
+		ss, err := h.service.FindAllForOrg(user.OrgID, search)
 		if err != nil {
 			helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -73,7 +79,7 @@ func (h *SupplierHandler) HandleSuppliers(w http.ResponseWriter, r *http.Request
 			Name: req.Name, ContactPerson: req.ContactPerson,
 			Phone: req.Phone, Email: req.Email, Address: req.Address,
 		}
-		if err := h.service.Create(s); err != nil {
+		if err := h.service.CreateForOrg(user.OrgID, s); err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -84,6 +90,11 @@ func (h *SupplierHandler) HandleSuppliers(w http.ResponseWriter, r *http.Request
 }
 
 func (h *SupplierHandler) HandleSupplierByID(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
@@ -92,7 +103,7 @@ func (h *SupplierHandler) HandleSupplierByID(w http.ResponseWriter, r *http.Requ
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s, err := h.service.FindByID(id)
+		s, err := h.service.FindByIDForOrg(user.OrgID, id)
 		if err != nil {
 			helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -112,13 +123,13 @@ func (h *SupplierHandler) HandleSupplierByID(w http.ResponseWriter, r *http.Requ
 			ID: id, Name: req.Name, ContactPerson: req.ContactPerson,
 			Phone: req.Phone, Email: req.Email, Address: req.Address,
 		}
-		if err := h.service.Update(s); err != nil {
+		if err := h.service.UpdateForOrg(user.OrgID, s); err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		helpers.WriteJSON(w, http.StatusOK, toResponse(*s))
 	case http.MethodDelete:
-		if err := h.service.Delete(id); err != nil {
+		if err := h.service.DeleteForOrg(user.OrgID, id); err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}

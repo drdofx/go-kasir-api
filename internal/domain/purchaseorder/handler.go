@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type POHandler struct {
@@ -17,7 +18,7 @@ func NewPOHandler(service *POService) *POHandler {
 }
 
 type poRequest struct {
-	SupplierID int            `json:"supplier_id"`
+	SupplierID int             `json:"supplier_id"`
 	Items      []POItemRequest `json:"items"`
 }
 
@@ -31,13 +32,13 @@ type poItemResponse struct {
 }
 
 type poResponse struct {
-	ID          int             `json:"id"`
-	SupplierID  int             `json:"supplier_id"`
-	SupplierName string         `json:"supplier_name"`
-	Status      string          `json:"status"`
-	TotalAmount int             `json:"total_amount"`
-	CreatedAt   string          `json:"created_at"`
-	Items       []poItemResponse `json:"items"`
+	ID           int              `json:"id"`
+	SupplierID   int              `json:"supplier_id"`
+	SupplierName string           `json:"supplier_name"`
+	Status       string           `json:"status"`
+	TotalAmount  int              `json:"total_amount"`
+	CreatedAt    string           `json:"created_at"`
+	Items        []poItemResponse `json:"items"`
 }
 
 func toPOItemResponse(it POItem) poItemResponse {
@@ -69,9 +70,14 @@ func toPOResponses(pos []PurchaseOrder) []poResponse {
 }
 
 func (h *POHandler) HandlePOs(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		pos, err := h.service.FindAll()
+		pos, err := h.service.FindAllForOrg(user.OrgID)
 		if err != nil {
 			helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 			return
@@ -81,6 +87,10 @@ func (h *POHandler) HandlePOs(w http.ResponseWriter, r *http.Request) {
 		}
 		helpers.WriteJSON(w, http.StatusOK, toPOResponses(pos))
 	case http.MethodPost:
+		if user.BranchID == nil {
+			helpers.WriteError(w, http.StatusBadRequest, "no active branch")
+			return
+		}
 		var req poRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -90,7 +100,7 @@ func (h *POHandler) HandlePOs(w http.ResponseWriter, r *http.Request) {
 			helpers.WriteError(w, http.StatusBadRequest, "supplier_id is required")
 			return
 		}
-		po, err := h.service.CreatePO(req.SupplierID, req.Items)
+		po, err := h.service.CreatePOForOrg(user.OrgID, *user.BranchID, req.SupplierID, req.Items)
 		if err != nil {
 			helpers.WriteError(w, http.StatusBadRequest, err.Error())
 			return
@@ -102,6 +112,11 @@ func (h *POHandler) HandlePOs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *POHandler) HandlePOByID(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	path := r.URL.Path
 	idStr := r.PathValue("id")
 	if idStr == "" {
@@ -117,7 +132,7 @@ func (h *POHandler) HandlePOByID(w http.ResponseWriter, r *http.Request) {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	po, err := h.service.FindByID(id)
+	po, err := h.service.FindByIDForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -130,13 +145,22 @@ func (h *POHandler) HandlePOByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *POHandler) HandleReceivePO(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if user.BranchID == nil {
+		helpers.WriteError(w, http.StatusBadRequest, "no active branch")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	po, err := h.service.ReceivePO(id)
+	po, err := h.service.ReceivePOForOrg(user.OrgID, *user.BranchID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
