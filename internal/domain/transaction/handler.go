@@ -23,8 +23,8 @@ type checkoutPayment struct {
 }
 
 type checkoutRequest struct {
-	Items      []CheckoutItem   `json:"items"`
-	CustomerID *int             `json:"customer_id"`
+	Items      []CheckoutItem    `json:"items"`
+	CustomerID *int              `json:"customer_id"`
 	Payments   []checkoutPayment `json:"payments"`
 }
 
@@ -86,6 +86,7 @@ func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Reque
 	checkoutReq := CheckoutRequest{
 		Items:      req.Items,
 		CustomerID: req.CustomerID,
+		OrgID:      user.OrgID,
 		BranchID:   *user.BranchID,
 	}
 	for _, p := range req.Payments {
@@ -103,7 +104,12 @@ func (h *TransactionHandler) HandleCheckout(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *TransactionHandler) HandleTransactions(w http.ResponseWriter, r *http.Request) {
-	txns, err := h.service.FindAll()
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	txns, err := h.service.FindAllForOrg(user.OrgID)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -115,6 +121,11 @@ func (h *TransactionHandler) HandleTransactions(w http.ResponseWriter, r *http.R
 }
 
 func (h *TransactionHandler) HandleTransactionByID(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		helpers.WriteError(w, http.StatusBadRequest, "id is required")
@@ -125,7 +136,7 @@ func (h *TransactionHandler) HandleTransactionByID(w http.ResponseWriter, r *htt
 		helpers.WriteError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	txn, err := h.service.FindByID(id)
+	txn, err := h.service.FindByIDForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return

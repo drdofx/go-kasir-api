@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type CustomerHandler struct {
@@ -39,7 +40,7 @@ type purchaseItemResponse struct {
 }
 
 type purchaseHistoryResponse struct {
-	Customer  customerResponse      `json:"customer"`
+	Customer  customerResponse       `json:"customer"`
 	Purchases []purchaseItemResponse `json:"purchases"`
 }
 
@@ -95,19 +96,24 @@ func (h *CustomerHandler) HandleCustomerByID(w http.ResponseWriter, r *http.Requ
 	}
 	switch r.Method {
 	case http.MethodGet:
-		h.getByID(w, id)
+		h.getByID(w, r, id)
 	case http.MethodPut:
 		h.update(w, r, id)
 	case http.MethodDelete:
-		h.delete(w, id)
+		h.delete(w, r, id)
 	default:
 		helpers.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *CustomerHandler) list(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	search := r.URL.Query().Get("search")
-	customers, err := h.service.FindAll(search)
+	customers, err := h.service.FindAllForOrg(user.OrgID, search)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -119,21 +125,31 @@ func (h *CustomerHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CustomerHandler) create(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	var req customerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	c := &Customer{Name: req.Name, Phone: req.Phone, Email: req.Email, Address: req.Address}
-	if err := h.service.Create(c); err != nil {
+	if err := h.service.CreateForOrg(user.OrgID, c); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	helpers.WriteJSON(w, http.StatusCreated, toCustomerResponse(*c))
 }
 
-func (h *CustomerHandler) getByID(w http.ResponseWriter, id int) {
-	c, err := h.service.FindByID(id)
+func (h *CustomerHandler) getByID(w http.ResponseWriter, r *http.Request, id int) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	c, err := h.service.FindByIDForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -146,21 +162,31 @@ func (h *CustomerHandler) getByID(w http.ResponseWriter, id int) {
 }
 
 func (h *CustomerHandler) update(w http.ResponseWriter, r *http.Request, id int) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	var req customerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	c := &Customer{ID: id, Name: req.Name, Phone: req.Phone, Email: req.Email, Address: req.Address}
-	if err := h.service.Update(c); err != nil {
+	if err := h.service.UpdateForOrg(user.OrgID, c); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, toCustomerResponse(*c))
 }
 
-func (h *CustomerHandler) delete(w http.ResponseWriter, id int) {
-	if err := h.service.Delete(id); err != nil {
+func (h *CustomerHandler) delete(w http.ResponseWriter, r *http.Request, id int) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.service.DeleteForOrg(user.OrgID, id); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -168,6 +194,11 @@ func (h *CustomerHandler) delete(w http.ResponseWriter, id int) {
 }
 
 func (h *CustomerHandler) HandleCustomerHistory(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	if idStr == "" {
 		helpers.WriteError(w, http.StatusBadRequest, "id is required")
@@ -178,7 +209,7 @@ func (h *CustomerHandler) HandleCustomerHistory(w http.ResponseWriter, r *http.R
 		helpers.WriteError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	customer, err := h.service.FindByID(id)
+	customer, err := h.service.FindByIDForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -187,7 +218,7 @@ func (h *CustomerHandler) HandleCustomerHistory(w http.ResponseWriter, r *http.R
 		helpers.WriteError(w, http.StatusNotFound, "customer not found")
 		return
 	}
-	purchases, err := h.service.GetPurchaseHistory(id)
+	purchases, err := h.service.GetPurchaseHistoryForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return

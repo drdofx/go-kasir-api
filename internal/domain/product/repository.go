@@ -1,89 +1,149 @@
 package product
 
 import (
-    "database/sql"
+	"database/sql"
 )
 
 type Product struct {
-    ID           int
-    Name         string
-    Price        int
-    CategoryID   *int
-    CategoryName string
+	ID             int
+	Name           string
+	Price          int
+	CategoryID     *int
+	CategoryName   string
+	OrganizationID int
 }
 
 type ProductStock struct {
-    ProductID int
-    BranchID  int
-    Stock     int
+	ProductID int
+	BranchID  int
+	Stock     int
 }
 
 type productRepository struct {
-    db *sql.DB
+	db *sql.DB
 }
 
 type ProductRepository interface {
-    FindAll(name string) ([]Product, error)
-    FindByID(id int) (*Product, error)
-    Create(p *Product) error
-    Update(p *Product) error
-    Delete(id int) error
-    GetStocks(productID int) ([]ProductStock, error)
+	FindAll(name string) ([]Product, error)
+	FindAllForOrg(orgID int, name string) ([]Product, error)
+	FindByID(id int) (*Product, error)
+	FindByIDForOrg(orgID, id int) (*Product, error)
+	Create(p *Product) error
+	CreateForOrg(orgID int, p *Product) error
+	Update(p *Product) error
+	UpdateForOrg(orgID int, p *Product) error
+	Delete(id int) error
+	DeleteForOrg(orgID, id int) error
+	GetStocks(productID int) ([]ProductStock, error)
+	GetStocksForOrg(orgID, productID int) ([]ProductStock, error)
 }
 
 func NewProductRepository(db *sql.DB) ProductRepository {
-    return &productRepository{db: db}
+	return &productRepository{db: db}
 }
 
 func (r *productRepository) FindAll(name string) ([]Product, error) {
-    query := `SELECT p.id, p.name, p.price, p.category_id, COALESCE(c.name, '') as category_name
+	query := `SELECT p.id, p.name, p.price, p.category_id, COALESCE(c.name, '') as category_name
               FROM products p LEFT JOIN categories c ON p.category_id = c.id`
-    var args []interface{}
-    if name != "" {
-        query += " WHERE p.name ILIKE $1"
-        args = append(args, "%"+name+"%")
-    }
-    query += " ORDER BY p.id"
-    rows, err := r.db.Query(query, args...)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-    var products []Product
-    for rows.Next() {
-        var p Product
-        if err := rows.Scan(&p.ID, &p.Name, &p.Price, &p.CategoryID, &p.CategoryName); err != nil {
-            return nil, err
-        }
-        products = append(products, p)
-    }
-    return products, rows.Err()
+	var args []interface{}
+	if name != "" {
+		query += " WHERE p.name ILIKE $1"
+		args = append(args, "%"+name+"%")
+	}
+	query += " ORDER BY p.id"
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var products []Product
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.Name, &p.Price, &p.CategoryID, &p.CategoryName); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
+}
+
+func (r *productRepository) FindAllForOrg(orgID int, name string) ([]Product, error) {
+	query := `SELECT p.id, p.name, p.price, p.category_id, COALESCE(c.name, '') as category_name, COALESCE(p.organization_id, 0)
+              FROM products p LEFT JOIN categories c ON p.category_id = c.id
+              WHERE p.organization_id = $1`
+	args := []interface{}{orgID}
+	if name != "" {
+		query += " AND p.name ILIKE $2"
+		args = append(args, "%"+name+"%")
+	}
+	query += " ORDER BY p.id"
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var products []Product
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.Name, &p.Price, &p.CategoryID, &p.CategoryName, &p.OrganizationID); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
 }
 
 func (r *productRepository) FindByID(id int) (*Product, error) {
-    row := r.db.QueryRow(`SELECT p.id, p.name, p.price, p.category_id, COALESCE(c.name, '')
+	row := r.db.QueryRow(`SELECT p.id, p.name, p.price, p.category_id, COALESCE(c.name, '')
         FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = $1`, id)
-    p := &Product{}
-    if err := row.Scan(&p.ID, &p.Name, &p.Price, &p.CategoryID, &p.CategoryName); err != nil {
-        if err == sql.ErrNoRows {
-            return nil, nil
-        }
-        return nil, err
-    }
-    return p, nil
+	p := &Product{}
+	if err := row.Scan(&p.ID, &p.Name, &p.Price, &p.CategoryID, &p.CategoryName); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return p, nil
+}
+
+func (r *productRepository) FindByIDForOrg(orgID, id int) (*Product, error) {
+	row := r.db.QueryRow(`SELECT p.id, p.name, p.price, p.category_id, COALESCE(c.name, ''), COALESCE(p.organization_id, 0)
+        FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.organization_id = $1 AND p.id = $2`, orgID, id)
+	p := &Product{}
+	if err := row.Scan(&p.ID, &p.Name, &p.Price, &p.CategoryID, &p.CategoryName, &p.OrganizationID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return p, nil
 }
 
 func (r *productRepository) Create(p *Product) error {
-    return r.db.QueryRow(
-        "INSERT INTO products (name, price, category_id) VALUES ($1, $2, $3) RETURNING id",
-        p.Name, p.Price, p.CategoryID,
-    ).Scan(&p.ID)
+	return r.db.QueryRow(
+		"INSERT INTO products (name, price, category_id) VALUES ($1, $2, $3) RETURNING id",
+		p.Name, p.Price, p.CategoryID,
+	).Scan(&p.ID)
+}
+
+func (r *productRepository) CreateForOrg(orgID int, p *Product) error {
+	p.OrganizationID = orgID
+	return r.db.QueryRow(
+		"INSERT INTO products (name, price, category_id, organization_id) VALUES ($1, $2, $3, $4) RETURNING id",
+		p.Name, p.Price, p.CategoryID, orgID,
+	).Scan(&p.ID)
 }
 
 func (r *productRepository) Update(p *Product) error {
-    _, err := r.db.Exec("UPDATE products SET name=$1, price=$2, category_id=$3 WHERE id=$4",
-        p.Name, p.Price, p.CategoryID, p.ID)
-    return err
+	_, err := r.db.Exec("UPDATE products SET name=$1, price=$2, category_id=$3 WHERE id=$4",
+		p.Name, p.Price, p.CategoryID, p.ID)
+	return err
+}
+
+func (r *productRepository) UpdateForOrg(orgID int, p *Product) error {
+	_, err := r.db.Exec("UPDATE products SET name=$1, price=$2, category_id=$3 WHERE organization_id=$4 AND id=$5",
+		p.Name, p.Price, p.CategoryID, orgID, p.ID)
+	return err
 }
 
 func (r *productRepository) GetStocks(productID int) ([]ProductStock, error) {
@@ -104,7 +164,32 @@ func (r *productRepository) GetStocks(productID int) ([]ProductStock, error) {
 	return stocks, rows.Err()
 }
 
+func (r *productRepository) GetStocksForOrg(orgID, productID int) ([]ProductStock, error) {
+	rows, err := r.db.Query(`SELECT ps.product_id, ps.branch_id, ps.stock
+		FROM product_stocks ps
+		JOIN branches b ON b.id = ps.branch_id
+		WHERE b.organization_id = $1 AND ps.product_id = $2 ORDER BY ps.branch_id`, orgID, productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stocks []ProductStock
+	for rows.Next() {
+		var s ProductStock
+		if err := rows.Scan(&s.ProductID, &s.BranchID, &s.Stock); err != nil {
+			return nil, err
+		}
+		stocks = append(stocks, s)
+	}
+	return stocks, rows.Err()
+}
+
 func (r *productRepository) Delete(id int) error {
-    _, err := r.db.Exec("DELETE FROM products WHERE id = $1", id)
-    return err
+	_, err := r.db.Exec("DELETE FROM products WHERE id = $1", id)
+	return err
+}
+
+func (r *productRepository) DeleteForOrg(orgID, id int) error {
+	_, err := r.db.Exec("DELETE FROM products WHERE organization_id = $1 AND id = $2", orgID, id)
+	return err
 }

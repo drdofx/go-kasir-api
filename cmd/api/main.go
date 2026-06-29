@@ -283,8 +283,8 @@ type categoryRepoWrapper struct {
 	repo category.CategoryRepository
 }
 
-func (w *categoryRepoWrapper) FindByID(id int) (*product.Category, error) {
-	c, err := w.repo.FindByID(id)
+func (w *categoryRepoWrapper) FindByIDForOrg(orgID, id int) (*product.Category, error) {
+	c, err := w.repo.FindByIDForOrg(orgID, id)
 	if err != nil {
 		return nil, err
 	}

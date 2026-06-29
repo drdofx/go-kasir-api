@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"go-kasir-api/internal/pkg/helpers"
+	"go-kasir-api/internal/pkg/middleware"
 )
 
 type CategoryHandler struct {
@@ -63,18 +64,23 @@ func (h *CategoryHandler) HandleCategoryByID(w http.ResponseWriter, r *http.Requ
 	}
 	switch r.Method {
 	case http.MethodGet:
-		h.getByID(w, id)
+		h.getByID(w, r, id)
 	case http.MethodPut:
 		h.update(w, r, id)
 	case http.MethodDelete:
-		h.delete(w, id)
+		h.delete(w, r, id)
 	default:
 		helpers.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *CategoryHandler) list(w http.ResponseWriter, r *http.Request) {
-	categories, err := h.service.FindAll()
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	categories, err := h.service.FindAllForOrg(user.OrgID)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -86,21 +92,31 @@ func (h *CategoryHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CategoryHandler) create(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	var req categoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	c := &Category{Name: req.Name, Description: req.Description}
-	if err := h.service.Create(c); err != nil {
+	if err := h.service.CreateForOrg(user.OrgID, c); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	helpers.WriteJSON(w, http.StatusCreated, toResponse(*c))
 }
 
-func (h *CategoryHandler) getByID(w http.ResponseWriter, id int) {
-	c, err := h.service.FindByID(id)
+func (h *CategoryHandler) getByID(w http.ResponseWriter, r *http.Request, id int) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	c, err := h.service.FindByIDForOrg(user.OrgID, id)
 	if err != nil {
 		helpers.WriteError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -113,21 +129,31 @@ func (h *CategoryHandler) getByID(w http.ResponseWriter, id int) {
 }
 
 func (h *CategoryHandler) update(w http.ResponseWriter, r *http.Request, id int) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	var req categoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	c := &Category{ID: id, Name: req.Name, Description: req.Description}
-	if err := h.service.Update(c); err != nil {
+	if err := h.service.UpdateForOrg(user.OrgID, c); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	helpers.WriteJSON(w, http.StatusOK, toResponse(*c))
 }
 
-func (h *CategoryHandler) delete(w http.ResponseWriter, id int) {
-	if err := h.service.Delete(id); err != nil {
+func (h *CategoryHandler) delete(w http.ResponseWriter, r *http.Request, id int) {
+	user := middleware.UserFromContext(r.Context())
+	if user == nil {
+		helpers.WriteError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.service.DeleteForOrg(user.OrgID, id); err != nil {
 		helpers.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}

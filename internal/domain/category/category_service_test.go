@@ -16,8 +16,21 @@ func (m *mockCategoryRepo) FindAll() ([]Category, error) {
 	return args.Get(0).([]Category), args.Error(1)
 }
 
+func (m *mockCategoryRepo) FindAllForOrg(orgID int) ([]Category, error) {
+	args := m.Called(orgID)
+	return args.Get(0).([]Category), args.Error(1)
+}
+
 func (m *mockCategoryRepo) FindByID(id int) (*Category, error) {
 	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Category), args.Error(1)
+}
+
+func (m *mockCategoryRepo) FindByIDForOrg(orgID, id int) (*Category, error) {
+	args := m.Called(orgID, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -29,13 +42,28 @@ func (m *mockCategoryRepo) Create(c *Category) error {
 	return args.Error(0)
 }
 
+func (m *mockCategoryRepo) CreateForOrg(orgID int, c *Category) error {
+	args := m.Called(orgID, c)
+	return args.Error(0)
+}
+
 func (m *mockCategoryRepo) Update(c *Category) error {
 	args := m.Called(c)
 	return args.Error(0)
 }
 
+func (m *mockCategoryRepo) UpdateForOrg(orgID int, c *Category) error {
+	args := m.Called(orgID, c)
+	return args.Error(0)
+}
+
 func (m *mockCategoryRepo) Delete(id int) error {
 	args := m.Called(id)
+	return args.Error(0)
+}
+
+func (m *mockCategoryRepo) DeleteForOrg(orgID, id int) error {
+	args := m.Called(orgID, id)
 	return args.Error(0)
 }
 
@@ -45,6 +73,17 @@ func TestCategoryService_FindAll(t *testing.T) {
 	expected := []Category{{ID: 1, Name: "Minuman", Description: "Minuman"}}
 	repo.On("FindAll").Return(expected, nil)
 	result, err := svc.FindAll()
+	assert.NoError(t, err)
+	assert.Equal(t, expected, result)
+	repo.AssertExpectations(t)
+}
+
+func TestCategoryService_FindAllForOrg(t *testing.T) {
+	repo := new(mockCategoryRepo)
+	svc := NewCategoryService(repo)
+	expected := []Category{{ID: 1, Name: "Beverages", Description: "Beverages", OrganizationID: 10}}
+	repo.On("FindAllForOrg", 10).Return(expected, nil)
+	result, err := svc.FindAllForOrg(10)
 	assert.NoError(t, err)
 	assert.Equal(t, expected, result)
 	repo.AssertExpectations(t)
@@ -85,4 +124,12 @@ func TestCategoryService_Delete(t *testing.T) {
 	err := svc.Delete(1)
 	assert.NoError(t, err)
 	repo.AssertExpectations(t)
+}
+
+func TestCategoryService_DeleteForOrg_NotFound(t *testing.T) {
+	repo := new(mockCategoryRepo)
+	svc := NewCategoryService(repo)
+	repo.On("FindByIDForOrg", 10, 999).Return(nil, nil)
+	err := svc.DeleteForOrg(10, 999)
+	assert.ErrorIs(t, err, ErrCategoryNotFound)
 }

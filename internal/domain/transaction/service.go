@@ -33,12 +33,14 @@ type CheckoutPayment struct {
 type CheckoutRequest struct {
 	Items      []CheckoutItem    `json:"items"`
 	CustomerID *int              `json:"customer_id"`
+	OrgID      int               `json:"org_id"`
 	BranchID   int               `json:"branch_id"`
 	Payments   []CheckoutPayment `json:"payments"`
 }
 
 type CustomerRepository interface {
 	FindByID(id int) (*customer.Customer, error)
+	FindByIDForOrg(orgID, id int) (*customer.Customer, error)
 }
 
 type PaymentService interface {
@@ -77,7 +79,7 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 		}
 	}
 	if req.CustomerID != nil && *req.CustomerID > 0 {
-		customer, err := s.customerRepo.FindByID(*req.CustomerID)
+		customer, err := s.customerRepo.FindByIDForOrg(req.OrgID, *req.CustomerID)
 		if err != nil {
 			return nil, fmt.Errorf("find customer: %w", err)
 		}
@@ -94,7 +96,7 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
-	products, err := s.repo.LockProducts(tx, productIDs)
+	products, err := s.repo.LockProductsForOrg(tx, req.OrgID, productIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lock products: %w", err)
 	}
@@ -157,7 +159,7 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 			return nil, fmt.Errorf("%w: got %d, expected %d", ErrPaymentMismatch, paymentTotal, totalAmount)
 		}
 	}
-	transactionID, err := s.repo.InsertTransaction(tx, totalAmount, req.CustomerID)
+	transactionID, err := s.repo.InsertTransactionForOrg(tx, req.OrgID, req.BranchID, totalAmount, req.CustomerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
@@ -183,13 +185,21 @@ func (s *TransactionService) Checkout(req CheckoutRequest) (*Transaction, error)
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	return s.repo.FindByID(transactionID)
+	return s.repo.FindByIDForOrg(req.OrgID, transactionID)
 }
 
 func (s *TransactionService) FindAll() ([]Transaction, error) {
 	return s.repo.FindAll()
 }
 
+func (s *TransactionService) FindAllForOrg(orgID int) ([]Transaction, error) {
+	return s.repo.FindAllForOrg(orgID)
+}
+
 func (s *TransactionService) FindByID(id int) (*Transaction, error) {
 	return s.repo.FindByID(id)
+}
+
+func (s *TransactionService) FindByIDForOrg(orgID, id int) (*Transaction, error) {
+	return s.repo.FindByIDForOrg(orgID, id)
 }
